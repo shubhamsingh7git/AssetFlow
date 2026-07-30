@@ -6,21 +6,21 @@ export class UserRepository {
   async findById(id: string) {
     return prisma.user.findUnique({
       where: { id },
-      include: { role: true, department: { include: { parent: true } } },
+      include: { role: true, department: { include: { parent: true } }, organization: true },
     });
   }
 
   async findByEmail(email: string) {
-    return prisma.user.findUnique({
-      where: { email },
-      include: { role: true, department: true },
+    return prisma.user.findFirst({
+      where: { email: { equals: email, mode: 'insensitive' } },
+      include: { role: true, department: true, organization: true },
     });
   }
 
   async create(data: Prisma.UserCreateInput) {
     return prisma.user.create({
       data,
-      include: { role: true, department: true },
+      include: { role: true, department: true, organization: true },
     });
   }
 
@@ -28,7 +28,7 @@ export class UserRepository {
     return prisma.user.update({
       where: { id },
       data,
-      include: { role: true, department: true },
+      include: { role: true, department: true, organization: true },
     });
   }
 
@@ -52,6 +52,7 @@ export class UserRepository {
         include: {
           role: true,
           department: { include: { parent: true } },
+          organization: true,
         },
       }),
       prisma.user.count({ where }),
@@ -75,6 +76,13 @@ export class UserRepository {
 
   async getRoleByName(name: string) {
     return prisma.role.findUnique({ where: { name } });
+  }
+
+  async findByGoogleId(googleId: string) {
+    return prisma.user.findUnique({
+      where: { googleId },
+      include: { role: true, department: true },
+    });
   }
 
   async countByRole(roleName: string) {

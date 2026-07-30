@@ -10,7 +10,7 @@ class DepartmentController {
   async getAll(req: Request, res: Response, next: NextFunction) {
     try {
       const { page, limit } = parsePagination(req.query as any);
-      const { data, total } = await departmentService.getAll(req.query);
+      const { data, total } = await departmentService.getAll(req.query, req.user?.id);
       sendPaginated(res, data, total, page, limit);
     } catch (error) { next(error); }
   }

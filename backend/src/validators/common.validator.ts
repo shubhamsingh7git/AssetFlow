@@ -44,19 +44,43 @@ export const createCategorySchema = z.object({
 export const updateCategorySchema = createCategorySchema.partial();
 
 // ─── Asset Validators ──────────────────────────────────────────────────────
+// ─── Asset Validators ──────────────────────────────────────────────────────
 export const createAssetSchema = z.object({
   name: z.string().min(1, 'Asset name is required'),
-  categoryId: z.string().min(1, 'Category is required'),
-  serialNumber: z.string().optional(),
-  location: z.string().optional(),
-  purchaseDate: z.string().datetime().optional().or(z.string().optional()),
-  purchaseCost: z.number().optional(),
-  warrantyExpiry: z.string().datetime().optional().or(z.string().optional()),
+  tag: z.string().min(1, 'Asset code is required').optional(),
+  assetCode: z.string().optional(),
+  categoryId: z.string().min(1, 'Asset category is required'),
+  departmentId: z.string().min(1, 'Department is required').optional().nullable(),
+  purchaseDate: z.string().min(1, 'Purchase date is required').optional().nullable(),
+  status: z.enum(['AVAILABLE', 'ALLOCATED', 'RESERVED', 'MAINTENANCE', 'LOST', 'DISPOSED', 'RETIRED']).default('AVAILABLE'),
+  
+  // Optional fields
+  type: z.string().optional().nullable(),
+  manufacturer: z.string().optional().nullable(),
+  model: z.string().optional().nullable(),
+  serialNumber: z.string().optional().nullable(),
+  barcode: z.string().optional().nullable(),
+  qrCode: z.string().optional().nullable(),
+  description: z.string().optional().nullable(),
+  vendor: z.string().optional().nullable(),
+  poNumber: z.string().optional().nullable(),
+  invoiceNumber: z.string().optional().nullable(),
+  purchaseCost: z.number().or(z.string().transform(v => parseFloat(v))).optional().nullable(),
+  currentValue: z.number().or(z.string().transform(v => parseFloat(v))).optional().nullable(),
+  warrantyExpiry: z.string().optional().nullable(),
+  expectedLifeMonths: z.number().or(z.string().transform(v => parseInt(v, 10))).optional().nullable(),
+  depreciationMethod: z.string().optional().nullable(),
+  location: z.string().optional().nullable(),
+  building: z.string().optional().nullable(),
+  floor: z.string().optional().nullable(),
+  room: z.string().optional().nullable(),
+  storageLocation: z.string().optional().nullable(),
+  imageUrl: z.string().optional().nullable(),
+  documentUrl: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
 });
 
-export const updateAssetSchema = createAssetSchema.partial().extend({
-  status: z.enum(['AVAILABLE', 'ALLOCATED', 'MAINTENANCE', 'LOST', 'DISPOSED', 'RETIRED']).optional(),
-});
+export const updateAssetSchema = createAssetSchema.partial();
 
 // ─── Allocation Validators ─────────────────────────────────────────────────
 export const createAllocationSchema = z.object({
@@ -88,14 +112,22 @@ export const createBookingSchema = z.object({
 
 // ─── Maintenance Validators ────────────────────────────────────────────────
 export const createMaintenanceSchema = z.object({
-  assetId: z.string().min(1),
+  assetId: z.string().min(1, 'Asset ID is required'),
   issue: z.string().min(1, 'Issue description is required'),
-  notes: z.string().optional(),
+  notes: z.string().optional().nullable(),
 });
 
 export const advanceMaintenanceSchema = z.object({
-  technicianName: z.string().optional(),
-  notes: z.string().optional(),
+  technicianName: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+});
+
+export const updateMaintenanceStatusSchema = z.object({
+  status: z.enum(['PENDING', 'APPROVED', 'TECHNICIAN_ASSIGNED', 'IN_PROGRESS', 'RESOLVED'], {
+    errorMap: () => ({ message: 'Invalid maintenance status. Must be one of PENDING, APPROVED, TECHNICIAN_ASSIGNED, IN_PROGRESS, RESOLVED' }),
+  }),
+  technicianName: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
 });
 
 // ─── Audit Validators ──────────────────────────────────────────────────────

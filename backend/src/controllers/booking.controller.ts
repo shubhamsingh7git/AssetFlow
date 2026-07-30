@@ -35,10 +35,31 @@ class BookingController {
     } catch (error) { next(error); }
   }
 
+  async approve(req: Request, res: Response, next: NextFunction) {
+    try {
+      const booking = await bookingService.approveBooking(getParam(req, 'id'), req.user!.id);
+      sendSuccess(res, booking, 'Booking approved');
+    } catch (error) { next(error); }
+  }
+
+  async reject(req: Request, res: Response, next: NextFunction) {
+    try {
+      const booking = await bookingService.rejectBooking(getParam(req, 'id'), req.user!.id);
+      sendSuccess(res, booking, 'Booking rejected');
+    } catch (error) { next(error); }
+  }
+
   async cancel(req: Request, res: Response, next: NextFunction) {
     try {
       const booking = await bookingService.cancel(getParam(req, 'id'), req.user!.id);
       sendSuccess(res, booking, 'Booking cancelled');
+    } catch (error) { next(error); }
+  }
+
+  async getMyBookings(req: Request, res: Response, next: NextFunction) {
+    try {
+      const data = await bookingService.getMyBookings(req.user!.id);
+      sendSuccess(res, data);
     } catch (error) { next(error); }
   }
 }

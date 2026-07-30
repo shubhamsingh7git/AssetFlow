@@ -1,4 +1,4 @@
-import { Mail, Phone, MapPin, ShieldCheck } from 'lucide-react';
+import { Mail, MapPin, ShieldCheck } from 'lucide-react';
 import Logo from './ui/Logo';
 
 export default function Footer() {
@@ -22,11 +22,7 @@ export default function Footer() {
             <div className="space-y-2 pt-2 text-xs text-surface-650 font-mono font-medium">
               <div className="flex items-center space-x-2">
                 <Mail className="w-4 h-4 text-surface-500" />
-                <span>ketansingh001412@gmail.com</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Phone className="w-4 h-4 text-surface-500" />
-                <span>+91 73554 34067</span>
+                <span>iamshubhamsingh0405@gmail.com</span>
               </div>
               <div className="flex items-center space-x-2">
                 <MapPin className="w-4 h-4 text-surface-500" />

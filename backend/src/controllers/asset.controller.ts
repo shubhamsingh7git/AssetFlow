@@ -23,6 +23,13 @@ class AssetController {
     } catch (error) { next(error); }
   }
 
+  async generateTag(_req: Request, res: Response, next: NextFunction) {
+    try {
+      const result = await assetService.generateTag();
+      sendSuccess(res, result);
+    } catch (error) { next(error); }
+  }
+
   async create(req: Request, res: Response, next: NextFunction) {
     try {
       const data = createAssetSchema.parse(req.body);
@@ -59,6 +66,13 @@ class AssetController {
       const imageUrl = await uploadToCloudinary(req.file.path, 'assetflow/assets');
       const asset = await assetService.updateImage(getParam(req, 'id'), imageUrl, req.user!.id);
       sendSuccess(res, asset, 'Image uploaded');
+    } catch (error) { next(error); }
+  }
+
+  async getMyAssets(req: Request, res: Response, next: NextFunction) {
+    try {
+      const data = await assetService.getMyAssets(req.user!.id);
+      sendSuccess(res, data);
     } catch (error) { next(error); }
   }
 }

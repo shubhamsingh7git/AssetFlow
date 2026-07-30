@@ -24,6 +24,10 @@ import auditRoutes from './routes/audit.routes';
 import dashboardRoutes from './routes/dashboard.routes';
 import notificationRoutes from './routes/notification.routes';
 import activityLogRoutes from './routes/activitylog.routes';
+import organizationRoutes from './routes/organization.routes';
+import onboardingRoutes from './routes/onboarding.routes';
+import assetRequestRoutes from './routes/assetRequest.routes';
+import employeeRoutes from './routes/employee.routes';
 
 const app = express();
 
@@ -56,6 +60,8 @@ app.get('/api/health', (_req, res) => {
 
 // ─── API Routes ─────────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
+app.use('/api/organizations', organizationRoutes);
+app.use('/api/onboarding', onboardingRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/departments', departmentRoutes);
 app.use('/api/categories', categoryRoutes);
@@ -63,10 +69,13 @@ app.use('/api/assets', assetRoutes);
 app.use('/api/allocations', allocationRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/maintenance', maintenanceRoutes);
+app.use('/maintenance', maintenanceRoutes);
 app.use('/api/audits', auditRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/activity-logs', activityLogRoutes);
+app.use('/api/employees', employeeRoutes);
+app.use('/api/asset-requests', assetRequestRoutes);
 
 // ─── Error Handling ─────────────────────────────────────────────────────────
 app.use(notFoundHandler);

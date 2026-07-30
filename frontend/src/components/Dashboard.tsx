@@ -1,315 +1,304 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { 
-  LayoutDashboard, Building2, Laptop, ArrowRightLeft, Calendar, 
-  Wrench, ClipboardCheck, FileBarChart, Bell, LogOut, Plus,
-  Sparkles, AlertTriangle, ArrowRight, TrendingUp, BarChart4
+  LayoutDashboard, Building2, Laptop, Calendar, 
+  Wrench, Bell, LogOut, Plus, Sparkles, Menu, X, Command, Search
 } from "lucide-react";
-import FeaturedCrmDemoSection from "./ui/featured-crm-demo-section";
 import Logo from "./ui/Logo";
+import EmptyState from "./ui/EmptyState";
+import ErrorState from "./ui/ErrorState";
+import { SkeletonCard, SkeletonTable, SkeletonActivityList } from "./ui/SkeletonLoader";
+import * as api from "../lib/api";
+import { CommandPalette } from "./ui/CommandPalette";
+
+
+// â”€â”€â”€ Interfaces (kept identical for visual compatibility) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface Activity {
   id: string;
   text: string;
   timestamp: string;
+  action?: string;
+  details?: string;
+  createdAt?: string;
+  user?: { name: string };
 }
 
-interface Department {
-  name: string;
-  head: string;
-  parent: string;
-  status: "Active" | "Inactive";
+
+
+// ─── Status Display Helpers ──────────────────────────────────────────────────
+
+const statusDisplay: Record<string, string> = {
+  AVAILABLE: "Available",
+  ALLOCATED: "Allocated",
+  MAINTENANCE: "Maintenance",
+  LOST: "Lost",
+  DISPOSED: "Disposed",
+  RETIRED: "Retired",
+  ACTIVE: "Active",
+  INACTIVE: "Inactive",
+  PENDING: "Pending",
+  APPROVED: "Approved",
+  TECHNICIAN_ASSIGNED: "Technician assigned",
+  IN_PROGRESS: "In progress",
+  RESOLVED: "Resolved",
+  VERIFIED: "Verified",
+  MISSING: "Missing",
+  DAMAGED: "Damaged",
+  CONFIRMED: "Confirmed",
+  CANCELLED: "Cancelled",
+  COMPLETED: "Completed",
+};
+
+function displayStatus(s: string) {
+  return statusDisplay[s] || s;
 }
 
-interface Asset {
-  tag: string;
-  name: string;
-  category: string;
-  status: "Available" | "Allocated" | "Maintenance";
-  location: string;
+function timeAgo(dateStr: string): string {
+  const now = new Date();
+  const d = new Date(dateStr);
+  const diff = Math.floor((now.getTime() - d.getTime()) / 1000);
+  if (diff < 60) return "Just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)} mins ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)} hours ago`;
+  return `${Math.floor(diff / 86400)} days ago`;
 }
 
-interface MaintenanceTicket {
-  id: string;
-  tag: string;
-  issue: string;
-  status: "Pending" | "Approved" | "Technician assigned" | "In progress" | "Resolved";
-}
-
-interface AuditAsset {
-  tag: string;
-  name: string;
-  location: string;
-  status: "Verified" | "Missing" | "Damaged";
-}
-
-interface LogEntry {
-  text: string;
-  time: string;
-  type: "Alerts" | "Approvals" | "Bookings";
-  color: string;
-}
+// â”€â”€â”€ Main Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export default function Dashboard({ 
   username, 
   onLogout,
-  onSwitchToAdmin,
   themeMode,
   setThemeMode
 }: { 
   username: string | null; 
   onLogout: () => void; 
-  onSwitchToAdmin?: () => void;
   themeMode: "light" | "dark";
   setThemeMode: (mode: "light" | "dark") => void;
 }) {
   const [activeTab, setActiveTab] = useState<string>("dashboard");
-  const [dashboardMode, setDashboardMode] = useState<"assets" | "crm">("assets");
-  const [reportsMode, setReportsMode] = useState<"assets" | "crm">("assets");
-  const [activities, setActivities] = useState<Activity[]>([
-    { id: "1", text: "Laptop AF-0114 - allocated to Priya shah - IT dept", timestamp: "Just now" },
-    { id: "2", text: "Room B2 - booking confirmed - 2:00 to 3:00 PM", timestamp: "10 mins ago" },
-    { id: "3", text: "Projector AF-0062 - maintenance resolved", timestamp: "1 hour ago" },
-  ]);
 
-  const [stats, setStats] = useState({
-    availableHardware: 128,
-    allocated: 76,
-    availableRooms: 4,
-    activeBookings: 9,
-    pendingTransfers: 3,
-    upcomingReturns: 12,
-  });
+  // ─── Data State ────────────────────────────────────────────────────────────
+  const [notifications, setNotifications] = useState<string[]>([]);
 
-  const [notifications, setNotifications] = useState<string[]>([
-    "3 assets overdue for return - flagged for follow-up",
-  ]);
+
+  // ─── Loading & Error State ────────────────────────────────────────────────
+  const [loading, setLoading] = useState<Record<string, boolean>>({});
+  const [errors, setErrors] = useState<Record<string, string | null>>({});
+
+  const setLoadingFor = (key: string, v: boolean) => setLoading(prev => ({ ...prev, [key]: v }));
+  const setErrorFor = (key: string, v: string | null) => setErrors(prev => ({ ...prev, [key]: v }));
 
   // Modal / Form States
-  const [showRegisterModal, setShowRegisterModal] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isSidebarHovered, setIsSidebarHovered] = useState(false);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [showBookingModal, setShowBookingModal] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        setShowCommandPalette(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
   const [showRequestModal, setShowRequestModal] = useState(false);
+  const [showAssetReqModal, setShowAssetReqModal] = useState(false);
 
   // Form Fields
-  const [assetName, setAssetName] = useState("");
-  const [assetCategory, setAssetCategory] = useState("Laptop");
-  const [bookingRoom, setBookingRoom] = useState("Room B2");
-  const [bookingTime, setBookingTime] = useState("2:00 to 3:00 PM");
+  const [bookingResourceName, setBookingResourceName] = useState("");
+  const [bookingDate, setBookingDate] = useState(new Date().toISOString().split("T")[0]);
+  const [bookingStartTime, setBookingStartTime] = useState("09:00");
+  const [bookingEndTime, setBookingEndTime] = useState("10:00");
   const [requestTitle, setRequestTitle] = useState("");
+  const [requestAssetId, setRequestAssetId] = useState("");
 
-  // ─── Section 3: Organization Setup State ────────────────────────────────────
-  const [orgSubTab, setOrgSubTab] = useState<"departments" | "categories" | "employees">("departments");
-  const [departments, setDepartments] = useState<Department[]>([
-    { name: "Engineering", head: "aditi rao", parent: "--", status: "Active" },
-    { name: "Facilities", head: "rohan mehta", parent: "--", status: "Active" },
-    { name: "Field ops (east)", head: "sana iqbal", parent: "Field Ops", status: "Inactive" },
-  ]);
-  const [newDeptName, setNewDeptName] = useState("");
-  const [newDeptHead, setNewDeptHead] = useState("");
-  const [newDeptParent, setNewDeptParent] = useState("");
-  const [showAddDeptModal, setShowAddDeptModal] = useState(false);
+  // Asset Request fields
+  const [availableAssets, setAvailableAssets] = useState<any[]>([]);
+  const [assetReqAssetId, setAssetReqAssetId] = useState("");
+  const [assetReqReason, setAssetReqReason] = useState("");
+  const [myAssetRequests, setMyAssetRequests] = useState<any[]>([]);
 
-  // ─── Section 4: Assets List State ──────────────────────────────────────────
-  const [assets, setAssets] = useState<Asset[]>([
-    { tag: "AF-0012", name: "Dell Laptop", category: "Electronics", status: "Allocated", location: "bengaluru" },
-    { tag: "AF-0062", name: "Projector", category: "Electronics", status: "Maintenance", location: "HQ floor 2" },
-    { tag: "AF-0201", name: "Office chair", category: "Furniture", status: "Available", location: "Warehouse" },
-    { tag: "AF-0114", name: "Dell Laptop Pro", category: "Electronics", status: "Allocated", location: "bengaluru" },
-  ]);
-  const [assetSearch, setAssetSearch] = useState("");
-  const [assetCategoryFilter, setAssetCategoryFilter] = useState("All");
-  const [assetStatusFilter, setAssetStatusFilter] = useState("All");
+  const loadNotificationBanner = useCallback(async () => {
+    try {
+      const res = await api.fetchUnreadCount();
+      const count = res?.count ?? 0;
+      setNotifications(count > 0 ? [`${count} unread notifications`] : []);
+    } catch { /* silent */ }
+  }, []);
 
-  // ─── Section 5: Asset Allocation & Transfer State ──────────────────────────
-  const [transferAsset, setTransferAsset] = useState("AF-0114");
-  const [transferTo, setTransferTo] = useState("");
-  const [transferReason, setTransferReason] = useState("");
-  const [allocationHistory, setAllocationHistory] = useState([
-    { date: "Mar 12", event: "Allocated to Priya shah - Engineering" },
-    { date: "Jan 04", event: "Returned by Arjun Nair - condition: good" },
-  ]);
+  // ─── Employee-scoped data states ──────────────────────────────────────────
+  const [myAssets, setMyAssets] = useState<any[]>([]);
+  const [myBookings, setMyBookings] = useState<any[]>([]);
+  const [myTickets, setMyTickets] = useState<any[]>([]);
+  const [empNotifications, setEmpNotifications] = useState<any[]>([]);
+  const [myProfile, setMyProfile] = useState<any>(null);
+  const [empStats, setEmpStats] = useState<any>(null);
+  const [empActivity, setEmpActivity] = useState<Activity[]>([]);
 
-  // ─── Section 6: Resource Booking State ──────────────────────────────────────
-  const [bookingResource, setBookingResource] = useState("Conference room B2");
-  const [resourceBookings, setResourceBookings] = useState([
-    { time: "9:00", text: "Booked - Procurement Team - 9 to 10", isBooked: true, conflict: false },
-    { time: "10:00", text: "Requested 9:30 to 10:30 - conflict - slot is unavailable", isBooked: false, conflict: true },
-    { time: "11:00", text: "Available", isBooked: false, conflict: false },
-    { time: "12:00", text: "Available", isBooked: false, conflict: false },
-    { time: "1:00", text: "Available", isBooked: false, conflict: false },
-  ]);
-
-  // ─── Section 7: Maintenance State ──────────────────────────────────────────
-  const [maintenanceTickets, setMaintenanceTickets] = useState<MaintenanceTicket[]>([
-    { id: "m1", tag: "AF-0062", issue: "Projector bulb not turning on", status: "Pending" },
-    { id: "m2", tag: "AF-003", issue: "ac unit noisy compressor", status: "Approved" },
-    { id: "m3", tag: "AF-0078", issue: "forklift tech: R varma", status: "Technician assigned" },
-    { id: "m4", tag: "AF-897", issue: "Printer Jam parts ordered", status: "In progress" },
-    { id: "m5", tag: "AF-873", issue: "Chair repair resolved 7 Jul", status: "Resolved" },
-  ]);
-
-  // ─── Section 8: Audit State ───────────────────────────────────────────────
-  const [auditAssets, setAuditAssets] = useState<AuditAsset[]>([
-    { tag: "AF-003", name: "Dell laptop", location: "Desk E12", status: "Verified" },
-    { tag: "AF-9921", name: "Office chair", location: "Desk E14", status: "Missing" },
-    { tag: "AF-9838", name: "Monitor", location: "Desk E15", status: "Damaged" },
-  ]);
-  const [auditCycleOpen, setAuditCycleOpen] = useState(true);
-
-  // ─── Section 10: Notifications Logs State ──────────────────────────────────
-  const [logFilter, setLogFilter] = useState<"All" | "Alerts" | "Approvals" | "Bookings">("All");
-  const [logs] = useState<LogEntry[]>([
-    { text: "Laptop AF-0014 assigned to Priya shah", time: "2m ago", type: "Bookings", color: "bg-blue-500" },
-    { text: "Maintenance request AF-0055 approved", time: "18m ago", type: "Approvals", color: "bg-emerald-500" },
-    { text: "Booking confirmed: Room B2 : 2:00 to 3:00 PM", time: "1h ago", type: "Bookings", color: "bg-blue-500" },
-    { text: "Transfer approved: AF-0033 to facilities dept", time: "3h ago", type: "Approvals", color: "bg-zinc-400" },
-    { text: "Overdue return: AF-0021 was due 3 days ago", time: "1d ago", type: "Alerts", color: "bg-red-500" },
-    { text: "audit discrepancy flagged: AF-0088 damaged", time: "2d ago", type: "Alerts", color: "bg-amber-500" },
-  ]);
-
-  // ─── Actions & Handlers ────────────────────────────────────────────────────
-  const advanceTicket = (ticketId: string) => {
-    setMaintenanceTickets(prev => prev.map(t => {
-      if (t.id !== ticketId) return t;
-      let nextStatus: MaintenanceTicket["status"];
-      switch (t.status) {
-        case "Pending": nextStatus = "Approved"; break;
-        case "Approved": nextStatus = "Technician assigned"; break;
-        case "Technician assigned": nextStatus = "In progress"; break;
-        case "In progress": nextStatus = "Resolved"; break;
-        default: nextStatus = "Resolved";
-      }
-
-      // Business rule trigger: resolving returned asset to Available, approving card sets to Maintenance
-      if (nextStatus === "Resolved") {
-        setAssets(assetsPrev => assetsPrev.map(a => a.tag === t.tag ? { ...a, status: "Available" } : a));
-        setStats(s => ({ ...s, availableHardware: s.availableHardware + 1 }));
-      } else if (t.status === "Pending") {
-        setAssets(assetsPrev => assetsPrev.map(a => a.tag === t.tag ? { ...a, status: "Maintenance" } : a));
-      }
-
-      // Log activity
-      const activity: Activity = {
-        id: Date.now().toString(),
-        text: `Maintenance Ticket ${t.tag} advanced to: ${nextStatus}`,
-        timestamp: "Just now"
-      };
-      setActivities(prevAct => [activity, ...prevAct]);
-
-      return { ...t, status: nextStatus };
-    }));
+  const handleOpenAssetReqModal = async () => {
+    try {
+      const res = await api.fetchAvailableAssets();
+      const items = Array.isArray(res) ? res : res.data || [];
+      setAvailableAssets(items);
+      setShowAssetReqModal(true);
+    } catch (e: any) {
+      alert(e.message || "Failed to load available assets");
+    }
   };
 
-  const handleRegisterAsset = (e: React.FormEvent) => {
+  const handleAssetRequestSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!assetName) return;
-
-    const newTag = `AF-${Math.floor(Math.random() * 9000 + 1000)}`;
-    const newAsset: Asset = {
-      tag: newTag,
-      name: assetName,
-      category: assetCategory,
-      status: "Available",
-      location: "Warehouse"
-    };
-
-    setAssets([newAsset, ...assets]);
-    setStats(prev => ({ ...prev, availableHardware: prev.availableHardware + 1 }));
-    setActivities([
-      { id: Date.now().toString(), text: `${newAsset.name} (${newAsset.tag}) - registered by ${username || "Agent"}`, timestamp: "Just now" },
-      ...activities
-    ]);
-    setShowRegisterModal(false);
-    setAssetName("");
+    if (!assetReqAssetId) {
+      alert("Please select an available asset");
+      return;
+    }
+    try {
+      await api.submitAssetRequest({ assetId: assetReqAssetId, reason: assetReqReason });
+      alert("Asset request submitted to Admin!");
+      setShowAssetReqModal(false);
+      setAssetReqAssetId("");
+      setAssetReqReason("");
+      loadMyAssets();
+    } catch (e: any) {
+      alert(e.message || "Failed to submit asset request");
+    }
   };
 
-  const handleBookResource = (e: React.FormEvent) => {
+  // ─── Employee-scoped data loaders ──────────────────────────────────────────
+  const loadEmpDashboard = useCallback(async () => {
+    setLoadingFor("dashboard", true);
+    setErrorFor("dashboard", null);
+    try {
+      const [statsData, activityData] = await Promise.all([
+        api.fetchEmployeeDashboardStats(),
+        api.fetchEmployeeActivity(10),
+      ]);
+      setEmpStats(statsData);
+      const mapped = (Array.isArray(activityData) ? activityData : activityData?.data || []).map((a: any) => ({
+        id: a.id,
+        text: a.details || a.action || "",
+        timestamp: timeAgo(a.createdAt),
+      }));
+      setEmpActivity(mapped);
+    } catch (err: any) {
+      setErrorFor("dashboard", err.message);
+    } finally {
+      setLoadingFor("dashboard", false);
+    }
+  }, []);
+
+  const loadMyAssets = useCallback(async () => {
+    setLoadingFor("my_assets", true);
+    setErrorFor("my_assets", null);
+    try {
+      const [assetsRes, requestsRes] = await Promise.all([
+        api.fetchMyAssets(),
+        api.fetchMyAssetRequests(),
+      ]);
+      setMyAssets(Array.isArray(assetsRes) ? assetsRes : assetsRes?.data || []);
+      setMyAssetRequests(Array.isArray(requestsRes) ? requestsRes : requestsRes?.data || []);
+    } catch (err: any) { setErrorFor("my_assets", err.message); }
+    finally { setLoadingFor("my_assets", false); }
+  }, []);
+
+  const loadMyBookings = useCallback(async () => {
+    setLoadingFor("my_bookings", true);
+    setErrorFor("my_bookings", null);
+    try {
+      const res = await api.fetchMyBookings();
+      setMyBookings(Array.isArray(res) ? res : res?.data || []);
+    } catch (err: any) { setErrorFor("my_bookings", err.message); }
+    finally { setLoadingFor("my_bookings", false); }
+  }, []);
+
+  const loadMyTickets = useCallback(async () => {
+    setLoadingFor("maintenance", true);
+    setErrorFor("maintenance", null);
+    try {
+      const res = await api.fetchMyMaintenanceTickets();
+      setMyTickets(Array.isArray(res) ? res : res?.data || []);
+    } catch (err: any) { setErrorFor("maintenance", err.message); }
+    finally { setLoadingFor("maintenance", false); }
+  }, []);
+
+  const loadEmpNotifications = useCallback(async () => {
+    setLoadingFor("notifications", true);
+    setErrorFor("notifications", null);
+    try {
+      const res = await api.fetchNotifications();
+      setEmpNotifications(Array.isArray(res) ? res : res?.data || []);
+    } catch (err: any) { setErrorFor("notifications", err.message); }
+    finally { setLoadingFor("notifications", false); }
+  }, []);
+
+  const loadMyProfile = useCallback(async () => {
+    setLoadingFor("profile", true);
+    setErrorFor("profile", null);
+    try {
+      const res = await api.fetchMyProfile();
+      setMyProfile(res);
+    } catch (err: any) { setErrorFor("profile", err.message); }
+    finally { setLoadingFor("profile", false); }
+  }, []);
+
+  // ─── Initial Load ─────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    loadEmpDashboard();
+    loadNotificationBanner();
+  }, []);
+
+
+  // Load data when tabs switch
+  useEffect(() => {
+    if (activeTab === "my_assets") loadMyAssets();
+    if (activeTab === "my_bookings") loadMyBookings();
+    if (activeTab === "maintenance") loadMyTickets();
+    if (activeTab === "notifications") loadEmpNotifications();
+    if (activeTab === "profile") loadMyProfile();
+  }, [activeTab]);
+
+  const handleBookResource = async (e: React.FormEvent) => {
     e.preventDefault();
-    setResourceBookings(prev => prev.map(b => b.time === "11:00" ? { ...b, text: `Booked - You (${username}) - 11 to 12`, isBooked: true } : b));
-    setStats(prev => ({ ...prev, activeBookings: prev.activeBookings + 1 }));
-    setActivities([
-      { id: Date.now().toString(), text: `${bookingResource} - booking slot reserved - 11:00 AM`, timestamp: "Just now" },
-      ...activities
-    ]);
-    setShowBookingModal(false);
+    if (!bookingResourceName) return;
+    try {
+      await api.createBooking({
+        resourceName: bookingResourceName,
+        resourceType: "room",
+        date: bookingDate,
+        startTime: bookingStartTime,
+        endTime: bookingEndTime,
+      });
+      setShowBookingModal(false);
+      await loadEmpDashboard();
+    } catch { /* silent */ }
   };
 
-  const handleRaiseRequest = (e: React.FormEvent) => {
+  const handleRaiseRequest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!requestTitle) return;
-    const newTicket: MaintenanceTicket = {
-      id: `m_${Date.now()}`,
-      tag: "AF-0201",
-      issue: requestTitle,
-      status: "Pending"
-    };
-    setMaintenanceTickets([newTicket, ...maintenanceTickets]);
-    setActivities([
-      { id: Date.now().toString(), text: `Maintenance requested: "${requestTitle}" for AF-0201`, timestamp: "Just now" },
-      ...activities
-    ]);
-    setShowRequestModal(false);
-    setRequestTitle("");
+    if (!requestTitle || !requestAssetId) return;
+    try {
+      await api.createMaintenance({ assetId: requestAssetId, issue: requestTitle });
+      setShowRequestModal(false);
+      setRequestTitle("");
+      setRequestAssetId("");
+      await loadEmpDashboard();
+    } catch { /* silent */ }
   };
-
-  const handleAddDept = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newDeptName || !newDeptHead) return;
-    const newDept: Department = {
-      name: newDeptName,
-      head: newDeptHead,
-      parent: newDeptParent || "--",
-      status: "Active"
-    };
-    setDepartments([...departments, newDept]);
-    setShowAddDeptModal(false);
-    setNewDeptName("");
-    setNewDeptHead("");
-    setNewDeptParent("");
-  };
-
-  const handleTransferRequest = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!transferTo) return;
-
-    setAllocationHistory([
-      { date: "Just now", event: `Transferred to ${transferTo} - pending validation` },
-      ...allocationHistory
-    ]);
-
-    setActivities([
-      { id: Date.now().toString(), text: `Transfer requested: ${transferAsset} to ${transferTo} (Reason: ${transferReason || "None"})`, timestamp: "Just now" },
-      ...activities
-    ]);
-
-    setTransferTo("");
-    setTransferReason("");
-  };
-
-  const toggleAuditStatus = (tag: string) => {
-    setAuditAssets(prev => prev.map(a => {
-      if (a.tag !== tag) return a;
-      let nextStatus: AuditAsset["status"];
-      if (a.status === "Verified") nextStatus = "Missing";
-      else if (a.status === "Missing") nextStatus = "Damaged";
-      else nextStatus = "Verified";
-      return { ...a, status: nextStatus };
-    }));
-  };
-
-  const flaggedAuditsCount = auditAssets.filter(a => a.status === "Missing" || a.status === "Damaged").length;
 
   const sidebarLinks = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { id: "org_setup", label: "Organization setup", icon: Building2 },
-    { id: "assets", label: "Assets", icon: Laptop },
-    { id: "transfers", label: "Allocation & Transfer", icon: ArrowRightLeft },
-    { id: "booking", label: "Resource Booking", icon: Calendar },
+    { id: "my_assets", label: "My Assets", icon: Laptop },
+    { id: "my_bookings", label: "My Bookings", icon: Calendar },
     { id: "maintenance", label: "Maintenance", icon: Wrench },
-    { id: "audit", label: "Audit", icon: ClipboardCheck },
-    { id: "reports", label: "Reports", icon: FileBarChart },
     { id: "notifications", label: "Notifications", icon: Bell },
-    { id: "crm", label: "CRM Demo", icon: Sparkles },
+    { id: "profile", label: "My Profile", icon: Building2 },
   ];
+
 
   return (
     <div 
@@ -322,52 +311,68 @@ export default function Dashboard({
         backgroundPosition: "center",
       }}
     >
-      {/* Top Header */}
-      <header className="h-16 border-b border-surface-200 dark:border-zinc-800 px-6 flex items-center justify-between bg-white/80 dark:bg-zinc-900/85 backdrop-blur-md sticky top-0 z-30 shadow-sm">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded bg-brand-900 flex items-center justify-center p-1">
+      {/* Top Navigation Bar */}
+      <header className="h-16 border-b border-surface-200 dark:border-zinc-800 px-4 sm:px-6 flex items-center justify-between bg-white/80 dark:bg-zinc-900/85 backdrop-blur-md sticky top-0 z-30 shadow-sm">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="md:hidden p-2 border border-surface-200 dark:border-zinc-800 rounded-lg text-surface-600 dark:text-zinc-300 hover:bg-surface-100 dark:hover:bg-zinc-800 transition cursor-pointer"
+            aria-label="Toggle Navigation"
+          >
+            {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+          </button>
+
+          <div className="w-8 h-8 rounded bg-brand-900 flex items-center justify-center p-1 shrink-0">
             <Logo className="w-full h-full text-white" />
           </div>
           <span className="text-xl font-bold tracking-tight text-surface-900 dark:text-white font-sans">
             Asset<span className="text-brand-900">Flow</span>
           </span>
+          <button
+            onClick={() => setShowCommandPalette(true)}
+            className="flex items-center gap-2 bg-surface-50 dark:bg-zinc-950 border border-surface-200 dark:border-zinc-800 rounded-lg h-9 px-3 text-xs font-semibold text-surface-500 dark:text-zinc-400 hover:border-brand-900 transition cursor-pointer ml-2"
+          >
+            <Search className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Search...</span>
+            <kbd className="hidden sm:inline-flex items-center gap-0.5 bg-surface-200 dark:bg-zinc-800 text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border border-surface-300 dark:border-zinc-700">
+              <Command className="w-2.5 h-2.5" /> K
+            </kbd>
+          </button>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 sm:gap-4">
           <button
             onClick={() => setThemeMode(themeMode === "light" ? "dark" : "light")}
-            className="p-2 border border-surface-200 dark:border-zinc-800 rounded-lg bg-white dark:bg-zinc-900 text-surface-600 dark:text-zinc-400 dark:text-zinc-300 hover:bg-surface-50 dark:hover:bg-zinc-800 transition cursor-pointer"
+            className="p-2 border border-surface-200 dark:border-zinc-800 rounded-lg bg-white dark:bg-zinc-900 text-surface-600 dark:text-zinc-300 hover:bg-surface-50 dark:hover:bg-zinc-800 transition cursor-pointer"
             title="Toggle Theme"
           >
             <Sparkles className="w-4 h-4" />
           </button>
-          <span className="text-sm text-surface-600 dark:text-zinc-400 dark:text-zinc-400 font-medium">
+          <span className="text-xs sm:text-sm text-surface-600 dark:text-zinc-400 font-medium hidden sm:inline">
             Agent Callsign: <span className="text-brand-900 dark:text-brand-500 font-bold">{username || "Guest"}</span>
           </span>
-          {onSwitchToAdmin && (
-            <button
-              type="button"
-              onClick={onSwitchToAdmin}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-brand-900 text-xs font-bold text-brand-900 dark:text-brand-400 hover:bg-brand-50 dark:hover:bg-zinc-800 bg-white dark:bg-zinc-900 transition-all cursor-pointer shadow-sm"
-            >
-              Admin Portal
-            </button>
-          )}
+
           <button
             type="button"
             onClick={onLogout}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-brand-900 hover:bg-brand-800 text-xs font-bold text-white transition-all cursor-pointer shadow-sm"
           >
             <LogOut className="w-3.5 h-3.5" />
-            Logout
+            <span className="hidden sm:inline">Logout</span>
           </button>
         </div>
       </header>
 
       {/* Main Layout Area */}
-      <div className="flex-grow flex">
-        {/* Sidebar Navigation */}
-        <aside className="w-64 border-r border-surface-200 dark:border-zinc-800 bg-white/40 dark:bg-zinc-900/40 backdrop-blur-md py-6 flex flex-col justify-between shrink-0">
-          <nav className="space-y-1 px-3">
+      <div className="flex-grow flex relative">
+        {/* Desktop Collapsible Auto-Hide Sidebar Navigation */}
+        <aside 
+          onMouseEnter={() => setIsSidebarHovered(true)}
+          onMouseLeave={() => setIsSidebarHovered(false)}
+          className={`hidden md:flex border-r border-surface-200 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md py-6 flex-col justify-between shrink-0 transition-all duration-300 ease-in-out ${
+            isSidebarHovered ? "w-64" : "w-16"
+          }`}
+        >
+          <nav className="space-y-1 px-2.5">
             {sidebarLinks.map(link => {
               const Icon = link.icon;
               const isActive = activeTab === link.id;
@@ -376,1015 +381,523 @@ export default function Dashboard({
                   key={link.id}
                   type="button"
                   onClick={() => setActiveTab(link.id)}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-bold transition-all cursor-pointer ${
+                  title={link.label}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-bold transition-all cursor-pointer overflow-hidden ${
                     isActive 
                       ? "bg-brand-900 text-white shadow-md shadow-brand-900/20" 
                       : "text-surface-650 dark:text-zinc-400 hover:bg-surface-100 dark:hover:bg-zinc-800 hover:text-surface-900 dark:hover:text-white"
                   }`}
                 >
-                  <Icon className={`w-4 h-4 ${isActive ? "text-white" : "text-surface-400 dark:text-zinc-550"}`} />
-                  {link.label}
+                  <Icon className={`w-4 h-4 shrink-0 ${isActive ? "text-white" : "text-surface-400 dark:text-zinc-550"}`} />
+                  <span className={`whitespace-nowrap transition-opacity duration-200 ${isSidebarHovered ? "opacity-100" : "opacity-0 w-0 hidden"}`}>
+                    {link.label}
+                  </span>
                 </button>
               );
             })}
           </nav>
           
-          <div className="px-6 py-4 border-t border-surface-200 dark:border-zinc-800 text-[10px] text-surface-400 dark:text-zinc-600 font-mono">
+          <div className={`px-4 py-3 border-t border-surface-200 dark:border-zinc-800 text-[10px] text-surface-400 dark:text-zinc-600 font-mono whitespace-nowrap overflow-hidden transition-opacity duration-200 ${
+            isSidebarHovered ? "opacity-100" : "opacity-0 hidden"
+          }`}>
             SECURE SYSTEM v2.4
           </div>
         </aside>
 
+        {/* Mobile Drawer Overlay Sidebar */}
+        {mobileMenuOpen && (
+          <div className="md:hidden fixed inset-0 z-50 flex">
+            <div className="fixed inset-0 bg-zinc-900/50 backdrop-blur-sm" onClick={() => setMobileMenuOpen(false)} />
+            <aside className="relative w-64 max-w-[80vw] bg-white dark:bg-zinc-900 border-r border-surface-200 dark:border-zinc-800 py-6 flex flex-col justify-between z-10 shadow-2xl">
+              <div className="px-4 pb-4 border-b border-surface-200 dark:border-zinc-800 flex justify-between items-center">
+                <span className="font-extrabold text-xs uppercase tracking-wider text-surface-900 dark:text-white">Portal Menu</span>
+                <button onClick={() => setMobileMenuOpen(false)} className="p-1 text-surface-400 hover:text-surface-900 dark:hover:text-white">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <nav className="space-y-1 px-3 py-4 flex-grow overflow-y-auto">
+                {sidebarLinks.map(link => {
+                  const Icon = link.icon;
+                  const isActive = activeTab === link.id;
+                  return (
+                    <button
+                      key={link.id}
+                      type="button"
+                      onClick={() => { setActiveTab(link.id); setMobileMenuOpen(false); }}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-bold transition-all cursor-pointer ${
+                        isActive 
+                          ? "bg-brand-900 text-white shadow-md shadow-brand-900/20" 
+                          : "text-surface-650 dark:text-zinc-400 hover:bg-surface-100 dark:hover:bg-zinc-800 hover:text-surface-900 dark:hover:text-white"
+                      }`}
+                    >
+                      <Icon className={`w-4 h-4 ${isActive ? "text-white" : "text-surface-400 dark:text-zinc-550"}`} />
+                      {link.label}
+                    </button>
+                  );
+                })}
+              </nav>
+              <div className="px-6 py-4 border-t border-surface-200 dark:border-zinc-800 text-[10px] text-surface-400 dark:text-zinc-600 font-mono">
+                SECURE SYSTEM v2.4
+              </div>
+            </aside>
+          </div>
+        )}
+
         {/* Content Pane */}
-        <main className="flex-grow p-8 overflow-y-auto">
-          {/* ─── Tab: Dashboard ───────────────────────────────────────────────── */}
+        <main className="flex-grow p-4 sm:p-6 lg:p-8 overflow-y-auto min-w-0">
+
+          {/* ─── Tab 1: Employee Dashboard ──────────────────────────────────── */}
           {activeTab === "dashboard" && (
-            <div className="max-w-6xl space-y-8">
-              <div className="flex justify-between items-center border-b border-surface-200 pb-4">
+            <div className="max-w-6xl space-y-8 animate-float">
+              <div className="flex justify-between items-center border-b border-surface-200 dark:border-zinc-800 pb-4">
                 <div>
-                  <h2 className="text-2xl font-extrabold tracking-tight text-surface-900 dark:text-white dark:text-white font-sans uppercase">Today's Overview</h2>
-                  <p className="text-sm text-surface-600 dark:text-zinc-400 dark:text-zinc-400 mt-1 font-medium">Real-time status of organizational resources and activities.</p>
-                </div>
-                {/* Mode Selector */}
-                <div className="flex gap-1.5 bg-surface-200/60 dark:bg-zinc-900/60 p-1.5 rounded-xl border border-surface-250 dark:border-zinc-800 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setDashboardMode("assets")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${dashboardMode === "assets" ? "bg-brand-900 text-white shadow" : "text-surface-700 dark:text-zinc-300 hover:text-surface-900 hover:bg-surface-100"}`}
-                  >
-                    Physical Assets
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDashboardMode("crm")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${dashboardMode === "crm" ? "bg-brand-900 text-white shadow" : "text-surface-700 dark:text-zinc-300 hover:text-surface-900 hover:bg-surface-100"}`}
-                  >
-                    CRM Integrations
-                  </button>
+                  <h2 className="text-2xl font-extrabold tracking-tight text-surface-900 dark:text-white font-sans uppercase">My Dashboard</h2>
+                  <p className="text-sm text-surface-600 dark:text-zinc-400 mt-1 font-medium">Your personal asset overview and recent activity.</p>
                 </div>
               </div>
 
-              {/* Stats Grid */}
-              {dashboardMode === "assets" ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  <div className="bg-white dark:bg-zinc-900 border border-surface-200/80 dark:border-zinc-800/80 hover:border-brand-900/30 rounded-xl p-5 shadow-sm hover:shadow transition-all flex flex-col justify-between h-28">
-                    <span className="text-xs font-bold text-surface-500 dark:text-zinc-500 uppercase tracking-wider font-sans">Available Hardware</span>
-                    <span className="text-3xl font-extrabold text-surface-900 dark:text-white tracking-tight">{stats.availableHardware}</span>
-                  </div>
-                  <div className="bg-white dark:bg-zinc-900 border border-surface-200/80 dark:border-zinc-800/80 hover:border-brand-900/30 rounded-xl p-5 shadow-sm hover:shadow transition-all flex flex-col justify-between h-28">
-                    <span className="text-xs font-bold text-surface-500 dark:text-zinc-500 uppercase tracking-wider font-sans">Allocated Assets</span>
-                    <span className="text-3xl font-extrabold text-surface-900 dark:text-white tracking-tight">{stats.allocated}</span>
-                  </div>
-                  <div className="bg-white dark:bg-zinc-900 border border-surface-200/80 dark:border-zinc-800/80 hover:border-brand-900/30 rounded-xl p-5 shadow-sm hover:shadow transition-all flex flex-col justify-between h-28">
-                    <span className="text-xs font-bold text-surface-500 dark:text-zinc-500 uppercase tracking-wider font-sans">Available Rooms</span>
-                    <span className="text-3xl font-extrabold text-brand-900 tracking-tight">{stats.availableRooms}</span>
-                  </div>
-                  <div className="bg-white dark:bg-zinc-900 border border-surface-200/80 dark:border-zinc-800/80 hover:border-brand-900/30 rounded-xl p-5 shadow-sm hover:shadow transition-all flex flex-col justify-between h-28">
-                    <span className="text-xs font-bold text-surface-500 dark:text-zinc-500 uppercase tracking-wider font-sans">Active Bookings</span>
-                    <span className="text-3xl font-extrabold text-surface-900 dark:text-white tracking-tight">{stats.activeBookings}</span>
-                  </div>
-                  <div className="bg-white dark:bg-zinc-900 border border-surface-200/80 dark:border-zinc-800/80 hover:border-brand-900/30 rounded-xl p-5 shadow-sm hover:shadow transition-all flex flex-col justify-between h-28">
-                    <span className="text-xs font-bold text-surface-500 dark:text-zinc-500 uppercase tracking-wider font-sans">Pending Transfers</span>
-                    <span className="text-3xl font-extrabold text-amber-600 tracking-tight">{stats.pendingTransfers}</span>
-                  </div>
-                  <div className="bg-white dark:bg-zinc-900 border border-surface-200/80 dark:border-zinc-800/80 hover:border-brand-900/30 rounded-xl p-5 shadow-sm hover:shadow transition-all flex flex-col justify-between h-28">
-                    <span className="text-xs font-bold text-surface-500 dark:text-zinc-500 uppercase tracking-wider font-sans">Upcoming returns</span>
-                    <span className="text-3xl font-extrabold text-surface-900 dark:text-white tracking-tight">{stats.upcomingReturns}</span>
-                  </div>
+              {/* Employee Stats Grid */}
+              {loading.dashboard ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
                 </div>
+              ) : errors.dashboard ? (
+                <ErrorState message="Unable to load dashboard." onRetry={loadEmpDashboard} />
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="bg-white dark:bg-zinc-900 border border-surface-200/80 dark:border-zinc-800/80 hover:border-brand-900/30 rounded-xl p-5 shadow-sm hover:shadow transition-all flex flex-col justify-between h-28">
-                    <span className="text-xs font-bold text-surface-500 dark:text-zinc-500 uppercase tracking-wider font-sans">Sales Pipeline Leads</span>
-                    <span className="text-3xl font-extrabold text-surface-900 dark:text-white tracking-tight">1,284</span>
+                    <span className="text-xs font-bold text-surface-500 dark:text-zinc-500 uppercase tracking-wider font-sans">My Assets</span>
+                    <span className="text-3xl font-extrabold text-surface-900 dark:text-white tracking-tight">{empStats?.myAssetsCount ?? 0}</span>
                   </div>
                   <div className="bg-white dark:bg-zinc-900 border border-surface-200/80 dark:border-zinc-800/80 hover:border-brand-900/30 rounded-xl p-5 shadow-sm hover:shadow transition-all flex flex-col justify-between h-28">
-                    <span className="text-xs font-bold text-surface-500 dark:text-zinc-500 uppercase tracking-wider font-sans">API Sync Success</span>
-                    <span className="text-3xl font-extrabold text-surface-900 dark:text-white tracking-tight">99.9%</span>
+                    <span className="text-xs font-bold text-surface-500 dark:text-zinc-500 uppercase tracking-wider font-sans">My Bookings</span>
+                    <span className="text-3xl font-extrabold text-brand-900 tracking-tight">{empStats?.myBookingsCount ?? 0}</span>
                   </div>
                   <div className="bg-white dark:bg-zinc-900 border border-surface-200/80 dark:border-zinc-800/80 hover:border-brand-900/30 rounded-xl p-5 shadow-sm hover:shadow transition-all flex flex-col justify-between h-28">
-                    <span className="text-xs font-bold text-surface-500 dark:text-zinc-500 uppercase tracking-wider font-sans">AI Follow-ups Sent</span>
-                    <span className="text-3xl font-extrabold text-brand-900 tracking-tight">4,112</span>
+                    <span className="text-xs font-bold text-surface-500 dark:text-zinc-500 uppercase tracking-wider font-sans">Open Tickets</span>
+                    <span className="text-3xl font-extrabold text-surface-900 dark:text-white tracking-tight">{empStats?.myTicketsCount ?? 0}</span>
                   </div>
                   <div className="bg-white dark:bg-zinc-900 border border-surface-200/80 dark:border-zinc-800/80 hover:border-brand-900/30 rounded-xl p-5 shadow-sm hover:shadow transition-all flex flex-col justify-between h-28">
-                    <span className="text-xs font-bold text-surface-500 dark:text-zinc-500 uppercase tracking-wider font-sans">Connected Platforms</span>
-                    <span className="text-3xl font-extrabold text-surface-900 dark:text-white tracking-tight">8 / 8</span>
-                  </div>
-                  <div className="bg-white dark:bg-zinc-900 border border-surface-200/80 dark:border-zinc-800/80 hover:border-brand-900/30 rounded-xl p-5 shadow-sm hover:shadow transition-all flex flex-col justify-between h-28">
-                    <span className="text-xs font-bold text-surface-500 dark:text-zinc-500 uppercase tracking-wider font-sans">Sync Volume (Daily)</span>
-                    <span className="text-3xl font-extrabold text-amber-600 tracking-tight">24.2k</span>
-                  </div>
-                  <div className="bg-white dark:bg-zinc-900 border border-surface-200/80 dark:border-zinc-800/80 hover:border-brand-900/30 rounded-xl p-5 shadow-sm hover:shadow transition-all flex flex-col justify-between h-28">
-                    <span className="text-xs font-bold text-surface-500 dark:text-zinc-500 uppercase tracking-wider font-sans">Avg Response Time</span>
-                    <span className="text-3xl font-extrabold text-surface-900 dark:text-white tracking-tight">4.2 hrs</span>
+                    <span className="text-xs font-bold text-surface-500 dark:text-zinc-500 uppercase tracking-wider font-sans">Unread Notifications</span>
+                    <span className="text-3xl font-extrabold text-surface-900 dark:text-white tracking-tight">{notifications.length > 0 ? notifications[0].split(" ")[0] : "0"}</span>
                   </div>
                 </div>
               )}
 
-              {/* Red/Amber Warning Banner */}
-              {dashboardMode === "assets" ? (
-                notifications.length > 0 && (
-                  <div className="flex items-center gap-3 p-4 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-xl text-red-700 dark:text-red-300 text-sm font-semibold tracking-wide shadow-sm">
-                    <AlertTriangle className="w-5 h-5 shrink-0 text-red-655" />
-                    <span>3 assets overdue for return - flagged for follow-up</span>
-                    <button 
-                      type="button"
-                      onClick={() => setNotifications([])} 
-                      className="ml-auto text-red-400 hover:text-red-700 transition-colors cursor-pointer"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                )
-              ) : (
-                <div className="flex items-center gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-sm font-semibold tracking-wide shadow-sm">
-                  <AlertTriangle className="w-5 h-5 shrink-0 text-amber-600" />
-                  <span>Copper CRM integration token expires in 5 days - action required</span>
-                </div>
-              )}
-
-              {/* Actions row */}
-              <div className="flex flex-wrap gap-4">
-                {dashboardMode === "assets" ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setShowRegisterModal(true)}
-                      className="px-5 py-3 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-sm shadow-sm hover:shadow transition-all flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Plus className="w-4 h-4" />
-                      Register asset
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowBookingModal(true)}
-                      className="px-5 py-3 rounded-lg border border-surface-200 hover:border-brand-900 bg-white hover:bg-surface-50 text-surface-700 dark:text-zinc-300 hover:text-brand-900 font-bold text-sm shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Calendar className="w-4 h-4 text-surface-400" />
-                      Book resource
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowRequestModal(true)}
-                      className="px-5 py-3 rounded-lg border border-surface-200 hover:border-brand-900 bg-white hover:bg-surface-50 text-surface-700 dark:text-zinc-300 hover:text-brand-900 font-bold text-sm shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Wrench className="w-4 h-4 text-surface-400" />
-                      Raise requests
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const newAct = {
-                          id: Date.now().toString(),
-                          text: `[Sync Success] Manual sync completed for: Salesforce, HubSpot, Zoho, Pipedrive, Freshsales, MS Dynamics, Copper, Insightly.`,
-                          timestamp: "Just now"
-                        };
-                        setActivities([newAct, ...activities]);
-                      }}
-                      className="px-5 py-3 rounded-lg bg-brand-900 hover:bg-brand-800 text-white font-bold text-sm shadow-sm hover:shadow transition-all flex items-center gap-1.5 cursor-pointer"
-                    >
-                      Trigger CRM Sync
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const newAct = {
-                          id: Date.now().toString(),
-                          text: `[AI Follow-ups] Automated pipeline optimization completed. Sent 128 reminders.`,
-                          timestamp: "Just now"
-                        };
-                        setActivities([newAct, ...activities]);
-                      }}
-                      className="px-5 py-3 rounded-lg border border-surface-200 hover:border-brand-900 bg-white hover:bg-surface-50 text-surface-700 dark:text-zinc-300 hover:text-brand-900 font-bold text-sm shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
-                    >
-                      Optimize Pipeline
-                    </button>
-                  </>
-                )}
-              </div>
-
-              {/* Recent Activity List */}
+              {/* Recent Activity */}
               <div className="bg-white dark:bg-zinc-900 border border-surface-200 dark:border-zinc-800 rounded-xl p-6 space-y-4 shadow-sm">
                 <h3 className="text-lg font-bold text-surface-900 dark:text-white tracking-wide font-sans uppercase">Recent Activity</h3>
-                <div className="space-y-3 font-semibold text-sm text-surface-700 dark:text-zinc-300">
-                  {activities.map(activity => (
-                    <div key={activity.id} className="flex justify-between items-center py-2 border-b border-surface-100 dark:border-zinc-800 last:border-b-0">
-                      <span>{activity.text}</span>
-                      <span className="text-xs text-surface-400 dark:text-zinc-550 font-mono font-normal shrink-0">{activity.timestamp}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ─── Tab: Organization Setup (Screen 3) ─────────────────────────── */}
-          {activeTab === "org_setup" && (
-            <div className="max-w-6xl space-y-8">
-              <div>
-                <h2 className="text-2xl font-extrabold tracking-tight text-surface-900 dark:text-white dark:text-white font-sans uppercase">Organization setup</h2>
-                <p className="text-sm text-surface-600 dark:text-zinc-400 dark:text-zinc-400 mt-1 font-medium">Manage departments, parent configurations, and resource categories.</p>
-              </div>
-
-              {/* Sub tabs */}
-              <div className="flex gap-2 border-b border-surface-200 pb-3">
-                <button
-                  onClick={() => setOrgSubTab("departments")}
-                  className={`px-4 py-2 rounded-lg text-sm font-bold cursor-pointer transition-colors ${orgSubTab === "departments" ? "bg-brand-900 text-white" : "bg-white border border-surface-200 text-surface-700 dark:text-zinc-300 hover:bg-surface-50"}`}
-                >
-                  Departments
-                </button>
-                <button
-                  onClick={() => setOrgSubTab("categories")}
-                  className={`px-4 py-2 rounded-lg text-sm font-bold cursor-pointer transition-colors ${orgSubTab === "categories" ? "bg-brand-900 text-white" : "bg-white border border-surface-200 text-surface-700 dark:text-zinc-300 hover:bg-surface-50"}`}
-                >
-                  Categories
-                </button>
-                <button
-                  onClick={() => setOrgSubTab("employees")}
-                  className={`px-4 py-2 rounded-lg text-sm font-bold cursor-pointer transition-colors ${orgSubTab === "employees" ? "bg-brand-900 text-white" : "bg-white border border-surface-200 text-surface-700 dark:text-zinc-300 hover:bg-surface-50"}`}
-                >
-                  Employee
-                </button>
-                <button
-                  onClick={() => setShowAddDeptModal(true)}
-                  className="px-4 py-2 rounded-lg text-sm font-bold bg-emerald-700 hover:bg-emerald-600 text-white cursor-pointer ml-auto"
-                >
-                  + Add
-                </button>
-              </div>
-
-              {/* Departments Table */}
-              {orgSubTab === "departments" && (
-                <div className="bg-white dark:bg-zinc-900 border border-surface-200 dark:border-zinc-800 rounded-xl overflow-hidden shadow-sm">
-                  <table className="w-full text-left text-sm border-collapse">
-                    <thead>
-                      <tr className="bg-surface-50 border-b border-surface-200 text-surface-700 dark:text-zinc-300 font-bold uppercase tracking-wider text-xs">
-                        <th className="p-4">Department</th>
-                        <th className="p-4">Head</th>
-                        <th className="p-4">Parent Dept</th>
-                        <th className="p-4">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-surface-150 dark:divide-zinc-800 font-semibold text-surface-850 dark:text-zinc-200">
-                      {departments.map((dept, idx) => (
-                        <tr key={idx} className="hover:bg-surface-50/50 dark:hover:bg-zinc-900/50">
-                          <td className="p-4">{dept.name}</td>
-                          <td className="p-4 text-surface-600 dark:text-zinc-400">{dept.head}</td>
-                          <td className="p-4 text-surface-600 dark:text-zinc-400">{dept.parent}</td>
-                          <td className="p-4">
-                            <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-bold ${dept.status === "Active" ? "bg-green-50 text-green-700 border border-green-200" : "bg-zinc-100 text-zinc-600 border border-zinc-200"}`}>
-                              {dept.status}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  <div className="p-4 bg-surface-50 dark:bg-zinc-950 border-t border-surface-200 dark:border-zinc-800 text-xs font-bold text-surface-500 dark:text-zinc-500 tracking-wide uppercase">
-                    Editing a department here also drives the picklist in Screen 4 & 5
-                  </div>
-                </div>
-              )}
-
-              {/* Placeholders for Subtabs */}
-              {orgSubTab !== "departments" && (
-                <div className="p-12 text-center border border-dashed border-surface-200 rounded-xl bg-white shadow-sm">
-                  <p className="text-sm font-bold text-surface-700 dark:text-zinc-300 uppercase">Configuration panel active</p>
-                  <p className="text-xs text-surface-500 mt-1 max-w-sm mx-auto">This list is connected to active directory services. Add or manage keys dynamically using the add control buttons.</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ─── Tab: Assets List (Screen 4) ─────────────────────────────────── */}
-          {activeTab === "assets" && (
-            <div className="max-w-6xl space-y-8">
-              <div className="flex justify-between items-end">
-                <div>
-                  <h2 className="text-2xl font-extrabold tracking-tight text-surface-900 dark:text-white dark:text-white font-sans uppercase">Assets Directory</h2>
-                  <p className="text-sm text-surface-600 dark:text-zinc-400 dark:text-zinc-400 mt-1 font-medium">Verify hardware, allocations, and service logs.</p>
-                </div>
-                <button
-                  onClick={() => setShowRegisterModal(true)}
-                  className="px-4 py-2 rounded-lg text-sm font-bold bg-brand-900 hover:bg-brand-800 text-white cursor-pointer"
-                >
-                  + Register Asset
-                </button>
-              </div>
-
-              {/* Filters Bar */}
-              <div className="flex flex-wrap gap-4 bg-white/60 dark:bg-zinc-900/60 p-4 border border-surface-200 dark:border-zinc-800 rounded-xl shadow-sm">
-                <input
-                  type="text"
-                  placeholder="Search by tag, serial, or QR code.."
-                  value={assetSearch}
-                  onChange={e => setAssetSearch(e.target.value)}
-                  className="flex-grow min-w-[240px] bg-white dark:bg-zinc-950 border border-surface-300 dark:border-zinc-800 rounded-lg px-3 h-10 text-sm focus:border-brand-900 focus:ring-brand-900 outline-none font-semibold text-surface-900 dark:text-zinc-100"
-                />
-                
-                <select
-                  value={assetCategoryFilter}
-                  onChange={e => setAssetCategoryFilter(e.target.value)}
-                  className="bg-white dark:bg-zinc-950 border border-surface-300 dark:border-zinc-800 rounded-lg px-3 h-10 text-sm focus:border-brand-900 outline-none font-semibold text-surface-700 dark:text-zinc-300 dark:text-zinc-300"
-                >
-                  <option value="All">All Categories</option>
-                  <option value="Electronics">Electronics</option>
-                  <option value="Furniture">Furniture</option>
-                </select>
-
-                <select
-                  value={assetStatusFilter}
-                  onChange={e => setAssetStatusFilter(e.target.value)}
-                  className="bg-white dark:bg-zinc-950 border border-surface-300 dark:border-zinc-800 rounded-lg px-3 h-10 text-sm focus:border-brand-900 outline-none font-semibold text-surface-700 dark:text-zinc-300 dark:text-zinc-300"
-                >
-                  <option value="All">All Statuses</option>
-                  <option value="Available">Available</option>
-                  <option value="Allocated">Allocated</option>
-                  <option value="Maintenance">Maintenance</option>
-                </select>
-              </div>
-
-              {/* Assets Directory Table */}
-              <div className="bg-white dark:bg-zinc-900 border border-surface-200 dark:border-zinc-800 rounded-xl overflow-hidden shadow-sm">
-                <table className="w-full text-left text-sm border-collapse">
-                  <thead>
-                    <tr className="bg-surface-50 border-b border-surface-200 text-surface-700 dark:text-zinc-300 font-bold uppercase tracking-wider text-xs">
-                      <th className="p-4">Tag</th>
-                      <th className="p-4">Name</th>
-                      <th className="p-4">Category</th>
-                      <th className="p-4">Status</th>
-                      <th className="p-4">Location</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-surface-150 dark:divide-zinc-800 font-semibold text-surface-850 dark:text-zinc-200">
-                    {assets
-                      .filter(a => {
-                        const matchesQuery = a.tag.toLowerCase().includes(assetSearch.toLowerCase()) || a.name.toLowerCase().includes(assetSearch.toLowerCase());
-                        const matchesCategory = assetCategoryFilter === "All" || a.category === assetCategoryFilter;
-                        const matchesStatus = assetStatusFilter === "All" || a.status === assetStatusFilter;
-                        return matchesQuery && matchesCategory && matchesStatus;
-                      })
-                      .map((asset, idx) => (
-                        <tr key={idx} className="hover:bg-surface-50/50 dark:hover:bg-zinc-900/50">
-                          <td className="p-4 text-brand-900 font-bold">{asset.tag}</td>
-                          <td className="p-4">{asset.name}</td>
-                          <td className="p-4 text-surface-600 dark:text-zinc-400">{asset.category}</td>
-                          <td className="p-4">
-                            <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                              asset.status === "Available" ? "bg-green-50 text-green-700 border border-green-200" :
-                              asset.status === "Allocated" ? "bg-blue-50 text-blue-700 border border-blue-200" :
-                              "bg-amber-50 text-amber-700 border border-amber-200"
-                            }`}>
-                              {asset.status}
-                            </span>
-                          </td>
-                          <td className="p-4 text-surface-600 dark:text-zinc-400">{asset.location}</td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* ─── Tab: Allocation & Transfer (Screen 5) ───────────────────────── */}
-          {activeTab === "transfers" && (
-            <div className="max-w-6xl space-y-8">
-              <div>
-                <h2 className="text-2xl font-extrabold tracking-tight text-surface-900 dark:text-white dark:text-white font-sans uppercase">Asset allocation & Transfer</h2>
-                <p className="text-sm text-surface-600 dark:text-zinc-400 dark:text-zinc-400 mt-1 font-medium">Coordinate resource allocation and double-allocation validation rules.</p>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                {/* Form column */}
-                <div className="lg:col-span-2 bg-white dark:bg-zinc-900 border border-surface-200 dark:border-zinc-800 rounded-xl p-6 shadow-sm space-y-6">
-                  {/* Select Asset */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-surface-600 dark:text-zinc-400 uppercase tracking-wider">Asset</label>
-                    <select
-                      value={transferAsset}
-                      onChange={e => setTransferAsset(e.target.value)}
-                      className="w-full bg-white border border-surface-300 rounded-lg h-10 px-3 text-sm focus:border-brand-900 outline-none text-surface-900 font-semibold"
-                    >
-                      <option value="AF-0114">AF-0114 - Dell Laptop Pro (Allocated)</option>
-                      <option value="AF-0012">AF-0012 - Dell Laptop (Allocated)</option>
-                      <option value="AF-0201">AF-0201 - Office chair (Available)</option>
-                    </select>
-                  </div>
-
-                  {/* Warn Banner if already allocated */}
-                  {transferAsset !== "AF-0201" ? (
-                    <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm font-semibold tracking-wide space-y-0.5">
-                      <div>Already Allocated to Priya shah (Engineering)</div>
-                      <div className="text-xs text-red-500 font-normal">Direct re-allocation is blocked - submit a transfer request below</div>
-                    </div>
-                  ) : (
-                    <div className="p-4 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm font-semibold tracking-wide">
-                      Available for direct allocation
-                    </div>
-                  )}
-
-                  {/* Transfer Request */}
-                  <div className="space-y-4">
-                    <h3 className="text-sm font-bold uppercase tracking-wider text-surface-900 border-b border-surface-150 pb-2">Transfer Request</h3>
-                    <form onSubmit={handleTransferRequest} className="space-y-4">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-1.5">
-                          <label className="text-xs font-bold text-surface-600 dark:text-zinc-400 uppercase tracking-wider">From</label>
-                          <input
-                            type="text"
-                            value={transferAsset === "AF-0201" ? "--" : "Priya Shah"}
-                            disabled
-                            className="w-full bg-surface-50 border border-surface-300 rounded-lg h-10 px-3 text-sm text-surface-500 font-semibold outline-none cursor-not-allowed"
-                          />
+                {empActivity.length === 0 ? (
+                  <p className="text-sm text-surface-500 dark:text-zinc-500 font-medium">No recent activity.</p>
+                ) : (
+                  <div className="space-y-3 font-semibold text-sm text-surface-700 dark:text-zinc-300">
+                    {empActivity.map(a => (
+                      <div key={a.id} className="flex justify-between items-center py-2.5 border-b border-surface-100 dark:border-zinc-800 last:border-b-0">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-brand-900 dark:bg-brand-500" />
+                          <span>{a.text}</span>
                         </div>
-                        <div className="space-y-1.5">
-                          <label className="text-xs font-bold text-surface-600 dark:text-zinc-400 uppercase tracking-wider">To</label>
-                          <select
-                            value={transferTo}
-                            onChange={e => setTransferTo(e.target.value)}
-                            className="w-full bg-white border border-surface-300 rounded-lg h-10 px-3 text-sm focus:border-brand-900 outline-none text-surface-900 font-semibold"
-                            required
-                          >
-                            <option value="">Select Employee...</option>
-                            <option value="Aditi Rao">Aditi Rao (Engineering)</option>
-                            <option value="Rohan Mehta">Rohan Mehta (Facilities)</option>
-                            <option value="Sana Iqbal">Sana Iqbal (Field Ops)</option>
-                          </select>
-                        </div>
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-surface-600 dark:text-zinc-400 uppercase tracking-wider">Reason</label>
-                        <textarea
-                          rows={4}
-                          value={transferReason}
-                          onChange={e => setTransferReason(e.target.value)}
-                          placeholder="Why is this transfer necessary?"
-                          className="w-full bg-white border border-surface-300 rounded-lg p-3 text-sm focus:border-brand-900 outline-none text-surface-900 font-semibold"
-                        />
-                      </div>
-
-                      <button
-                        type="submit"
-                        className="bg-brand-900 hover:bg-brand-800 text-white rounded-lg h-10 px-5 text-sm font-bold uppercase tracking-wider cursor-pointer shadow-sm"
-                      >
-                        Submit Request
-                      </button>
-                    </form>
-                  </div>
-                </div>
-
-                {/* History column */}
-                <div className="bg-white border border-surface-200 rounded-xl p-6 shadow-sm space-y-4">
-                  <h3 className="text-base font-bold text-surface-900 uppercase tracking-wider font-sans border-b border-surface-150 pb-2">Allocation history</h3>
-                  <div className="space-y-4 text-sm font-semibold text-surface-700 dark:text-zinc-300">
-                    {allocationHistory.map((hist, idx) => (
-                      <div key={idx} className="flex gap-3">
-                        <span className="text-xs text-brand-900 font-mono bg-brand-50 px-2 py-0.5 rounded h-5">{hist.date}</span>
-                        <span>{hist.event}</span>
+                        <span className="text-xs text-surface-400 dark:text-zinc-500 font-mono font-normal shrink-0">{a.timestamp}</span>
                       </div>
                     ))}
                   </div>
-                </div>
+                )}
               </div>
             </div>
           )}
 
-          {/* ─── Tab: Resource Booking (Screen 6) ────────────────────────────── */}
-          {activeTab === "booking" && (
-            <div className="max-w-6xl space-y-8">
-              <div className="flex justify-between items-end">
+          {/* ─── Tab 2: My Assets & Requests ─────────────────────────────────── */}
+          {activeTab === "my_assets" && (
+            <div className="max-w-6xl space-y-8 animate-float">
+              <div className="flex justify-between items-center">
                 <div>
-                  <h2 className="text-2xl font-extrabold tracking-tight text-surface-900 dark:text-white dark:text-white font-sans uppercase">Resource booking</h2>
-                  <p className="text-sm text-surface-600 dark:text-zinc-400 dark:text-zinc-400 mt-1 font-medium">Verify shared calendar slots and double-booking validations.</p>
+                  <h2 className="text-2xl font-extrabold tracking-tight text-surface-900 dark:text-white font-sans uppercase">My Assets</h2>
+                  <p className="text-sm text-surface-600 dark:text-zinc-400 mt-1 font-medium">Assets allocated to you and your pending asset requests.</p>
                 </div>
-                <button
-                  onClick={() => setShowBookingModal(true)}
-                  className="px-4 py-2 rounded-lg text-sm font-bold bg-brand-900 hover:bg-brand-800 text-white cursor-pointer"
-                >
-                  Book a slot
-                </button>
+                <div className="flex gap-2">
+                  <button onClick={handleOpenAssetReqModal} className="px-4 py-2 rounded-lg text-xs font-bold bg-brand-900 hover:bg-brand-800 text-white cursor-pointer transition shadow flex items-center gap-2">
+                    <Plus className="w-4 h-4" /> Request Asset
+                  </button>
+                  <button onClick={loadMyAssets} className="px-4 py-2 rounded-lg text-xs font-bold bg-surface-200 dark:bg-zinc-800 hover:bg-surface-300 dark:hover:bg-zinc-700 text-surface-800 dark:text-zinc-200 cursor-pointer transition shadow flex items-center gap-2">
+                    <Laptop className="w-4 h-4" /> Refresh
+                  </button>
+                </div>
               </div>
 
-              <div className="bg-white dark:bg-zinc-900 border border-surface-200 dark:border-zinc-800 rounded-xl p-6 shadow-sm space-y-6">
-                {/* Resource Dropdown Selector */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-surface-600 dark:text-zinc-400 uppercase tracking-wider">Resource</label>
-                  <select
-                    value={bookingResource}
-                    onChange={e => setBookingResource(e.target.value)}
-                    className="w-full bg-white border border-surface-300 rounded-lg h-10 px-3 text-sm focus:border-brand-900 outline-none text-surface-900 font-semibold"
-                  >
-                    <option value="Conference room B2">Conference room B2 - Tue, 7 Jul</option>
-                    <option value="Tesla Model 3">Tesla Model 3 - Tue, 7 Jul</option>
-                    <option value="R&D Testing Lab">R&D Testing Lab - Tue, 7 Jul</option>
-                  </select>
-                </div>
+              {/* Section 1: Allocated Assets */}
+              <div className="space-y-3">
+                <h3 className="text-xs font-bold text-surface-700 dark:text-zinc-300 uppercase tracking-wider">Allocated Assets</h3>
+                {loading.my_assets ? (
+                  <SkeletonTable rows={4} cols={5} />
+                ) : errors.my_assets ? (
+                  <ErrorState message={errors.my_assets} onRetry={loadMyAssets} />
+                ) : myAssets.length === 0 ? (
+                  <EmptyState icon="laptop" title="No Assets Assigned" subtitle="You don't have any assets allocated to you yet." />
+                ) : (
+                  <div className="bg-white dark:bg-zinc-900 border border-surface-200 dark:border-zinc-800 rounded-xl overflow-hidden shadow-sm">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-surface-200 dark:border-zinc-800 bg-surface-50 dark:bg-zinc-950 text-[10px] text-surface-500 dark:text-zinc-500 font-bold uppercase tracking-wider">
+                            <th className="p-3 text-left">Tag</th>
+                            <th className="p-3 text-left">Name</th>
+                            <th className="p-3 text-left">Category</th>
+                            <th className="p-3 text-left">Status</th>
+                            <th className="p-3 text-left">Allocated Since</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-surface-150 dark:divide-zinc-800 font-semibold text-surface-850 dark:text-zinc-200">
+                          {myAssets.map((a: any) => (
+                            <tr key={a.id} className="hover:bg-surface-50/50 dark:hover:bg-zinc-900/50">
+                              <td className="p-3 font-mono text-brand-900 dark:text-brand-300 font-bold">{a.asset?.tag || a.tag || "--"}</td>
+                              <td className="p-3">{a.asset?.name || a.name || "--"}</td>
+                              <td className="p-3 text-surface-600 dark:text-zinc-400">{a.asset?.category?.name || a.category?.name || "--"}</td>
+                              <td className="p-3">
+                                <span className="inline-flex px-2.5 py-0.5 rounded-full text-[10px] font-extrabold tracking-wide uppercase bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                                  Allocated
+                                </span>
+                              </td>
+                              <td className="p-3 text-surface-500 dark:text-zinc-500 text-[10px] font-mono">{a.allocatedAt ? new Date(a.allocatedAt).toLocaleDateString() : "--"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
 
-                {/* Slots Grid */}
-                <div className="space-y-4">
-                  {resourceBookings.map((slot, idx) => (
-                    <div key={idx} className="flex items-center gap-4 text-sm font-semibold">
-                      <div className="w-16 text-surface-500 font-mono text-right">{slot.time}</div>
-                      
-                      {slot.isBooked ? (
-                        <div className="flex-grow p-4 bg-brand-50 dark:bg-brand-950 border border-brand-200/80 dark:border-brand-900 rounded-lg text-brand-900 dark:text-brand-300 shadow-inner">
-                          {slot.text}
-                        </div>
-                      ) : slot.conflict ? (
-                        <div className="flex-grow p-4 bg-red-50 border border-dashed border-red-300 rounded-lg text-red-700">
-                          {slot.text}
-                        </div>
-                      ) : (
-                        <div className="flex-grow p-4 bg-surface-50 border border-surface-200 rounded-lg text-surface-400 font-medium">
-                          {slot.text}
-                        </div>
+              {/* Section 2: My Asset Requests */}
+              {myAssetRequests.length > 0 && (
+                <div className="space-y-3 pt-4 border-t border-surface-200 dark:border-zinc-800">
+                  <h3 className="text-xs font-bold text-surface-700 dark:text-zinc-300 uppercase tracking-wider">My Asset Requests</h3>
+                  <div className="bg-white dark:bg-zinc-900 border border-surface-200 dark:border-zinc-800 rounded-xl overflow-hidden shadow-sm">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-surface-200 dark:border-zinc-800 bg-surface-50 dark:bg-zinc-950 text-[10px] text-surface-500 dark:text-zinc-500 font-bold uppercase tracking-wider">
+                            <th className="p-3 text-left">Requested Asset</th>
+                            <th className="p-3 text-left">Reason</th>
+                            <th className="p-3 text-left">Status</th>
+                            <th className="p-3 text-left">Requested Date</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-surface-150 dark:divide-zinc-800 font-semibold text-surface-850 dark:text-zinc-200">
+                          {myAssetRequests.map((r: any) => (
+                            <tr key={r.id} className="hover:bg-surface-50/50 dark:hover:bg-zinc-900/50">
+                              <td className="p-3 font-bold">
+                                <span className="font-mono text-brand-900 dark:text-brand-300 mr-1">[{r.asset?.tag}]</span>
+                                {r.asset?.name}
+                              </td>
+                              <td className="p-3 text-surface-600 dark:text-zinc-400">{r.reason || "Standard Issue"}</td>
+                              <td className="p-3">
+                                <span className={`inline-flex px-2.5 py-0.5 rounded-full text-[10px] font-extrabold tracking-wide uppercase ${
+                                  r.status === "PENDING" ? "bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800" :
+                                  r.status === "APPROVED" ? "bg-green-50 dark:bg-green-950 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800" :
+                                  "bg-red-50 dark:bg-red-950 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800"
+                                }`}>{r.status}</span>
+                              </td>
+                              <td className="p-3 text-surface-500 dark:text-zinc-500 text-[10px] font-mono">{r.createdAt ? new Date(r.createdAt).toLocaleDateString() : "--"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* â”€â”€â”€ Tab 3: My Bookings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {activeTab === "my_bookings" && (
+            <div className="max-w-6xl space-y-8 animate-float">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h2 className="text-2xl font-extrabold tracking-tight text-surface-900 dark:text-white font-sans uppercase">My Bookings</h2>
+                  <p className="text-sm text-surface-600 dark:text-zinc-400 mt-1 font-medium">Your resource reservations and upcoming bookings.</p>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setShowBookingModal(true)} className="px-4 py-2 rounded-lg text-xs font-bold bg-white dark:bg-zinc-900 border border-surface-200 dark:border-zinc-800 text-surface-700 dark:text-zinc-300 hover:border-brand-900 cursor-pointer transition flex items-center gap-2">
+                    <Plus className="w-4 h-4" /> Book Resource
+                  </button>
+                  <button onClick={loadMyBookings} className="px-4 py-2 rounded-lg text-xs font-bold bg-brand-900 hover:bg-brand-800 text-white cursor-pointer transition shadow flex items-center gap-2">
+                    <Calendar className="w-4 h-4" /> Refresh
+                  </button>
+                </div>
+              </div>
+
+              {loading.my_bookings ? (
+                <SkeletonTable rows={4} cols={5} />
+              ) : errors.my_bookings ? (
+                <ErrorState message={errors.my_bookings} onRetry={loadMyBookings} />
+              ) : myBookings.length === 0 ? (
+                <EmptyState icon="calendar" title="No Bookings" subtitle="You haven't booked any resources yet." />
+              ) : (
+                <div className="bg-white dark:bg-zinc-900 border border-surface-200 dark:border-zinc-800 rounded-xl overflow-hidden shadow-sm">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-surface-200 dark:border-zinc-800 bg-surface-50 dark:bg-zinc-950 text-[10px] text-surface-500 dark:text-zinc-500 font-bold uppercase tracking-wider">
+                          <th className="p-3 text-left">Resource</th>
+                          <th className="p-3 text-left">Date</th>
+                          <th className="p-3 text-left">Time</th>
+                          <th className="p-3 text-left">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-surface-150 dark:divide-zinc-800 font-semibold text-surface-850 dark:text-zinc-200">
+                        {myBookings.map((b: any) => (
+                          <tr key={b.id} className="hover:bg-surface-50/50 dark:hover:bg-zinc-900/50">
+                            <td className="p-3 font-bold">{b.resourceName}</td>
+                            <td className="p-3 text-surface-600 dark:text-zinc-400">{b.date ? new Date(b.date).toLocaleDateString() : "--"}</td>
+                            <td className="p-3 font-mono text-[10px]">{b.startTime} - {b.endTime}</td>
+                            <td className="p-3">
+                              <span className={`inline-flex px-2.5 py-0.5 rounded-full text-[10px] font-extrabold tracking-wide uppercase ${
+                                b.status === "CONFIRMED" ? "bg-green-50 dark:bg-green-950 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800" :
+                                "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700"
+                              }`}>{displayStatus(b.status)}</span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* â”€â”€â”€ Tab 4: Maintenance Requests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {activeTab === "maintenance" && (
+            <div className="max-w-6xl space-y-8 animate-float">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h2 className="text-2xl font-extrabold tracking-tight text-surface-900 dark:text-white font-sans uppercase">Maintenance Requests</h2>
+                  <p className="text-sm text-surface-600 dark:text-zinc-400 mt-1 font-medium">Raise maintenance tickets for your assets and track their progress.</p>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setShowRequestModal(true)} className="px-4 py-2 rounded-lg text-xs font-bold bg-white dark:bg-zinc-900 border border-surface-200 dark:border-zinc-800 text-surface-700 dark:text-zinc-300 hover:border-brand-900 cursor-pointer transition flex items-center gap-2">
+                    <Plus className="w-4 h-4" /> Raise Ticket
+                  </button>
+                  <button onClick={loadMyTickets} className="px-4 py-2 rounded-lg text-xs font-bold bg-brand-900 hover:bg-brand-800 text-white cursor-pointer transition shadow flex items-center gap-2">
+                    <Wrench className="w-4 h-4" /> Refresh
+                  </button>
+                </div>
+              </div>
+
+              {loading.maintenance ? (
+                <SkeletonTable rows={4} cols={5} />
+              ) : errors.maintenance ? (
+                <ErrorState message={errors.maintenance} onRetry={loadMyTickets} />
+              ) : myTickets.length === 0 ? (
+                <EmptyState icon="wrench" title="No Tickets" subtitle="You haven't raised any maintenance tickets." />
+              ) : (
+                <div className="bg-white dark:bg-zinc-900 border border-surface-200 dark:border-zinc-800 rounded-xl overflow-hidden shadow-sm">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-surface-200 dark:border-zinc-800 bg-surface-50 dark:bg-zinc-950 text-[10px] text-surface-500 dark:text-zinc-500 font-bold uppercase tracking-wider">
+                          <th className="p-3 text-left">Asset</th>
+                          <th className="p-3 text-left">Issue</th>
+                          <th className="p-3 text-left">Status</th>
+                          <th className="p-3 text-left">Submitted</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-surface-150 dark:divide-zinc-800 font-semibold text-surface-850 dark:text-zinc-200">
+                        {myTickets.map((t: any) => (
+                          <tr key={t.id} className="hover:bg-surface-50/50 dark:hover:bg-zinc-900/50">
+                            <td className="p-3 font-mono text-brand-900 dark:text-brand-300 font-bold">{t.asset?.tag || "--"}</td>
+                            <td className="p-3 text-surface-600 dark:text-zinc-400 max-w-[300px] truncate">{t.issue}</td>
+                            <td className="p-3">
+                              <span className={`inline-flex px-2.5 py-0.5 rounded-full text-[10px] font-extrabold tracking-wide uppercase ${
+                                t.status === "PENDING" ? "bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800" :
+                                t.status === "RESOLVED" ? "bg-green-50 dark:bg-green-950 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800" :
+                                "bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800"
+                              }`}>{displayStatus(t.status)}</span>
+                            </td>
+                            <td className="p-3 text-surface-500 dark:text-zinc-500 text-[10px] font-mono">{t.createdAt ? new Date(t.createdAt).toLocaleDateString() : "--"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* â”€â”€â”€ Tab 5: Notifications â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {activeTab === "notifications" && (
+            <div className="max-w-6xl space-y-8 animate-float">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h2 className="text-2xl font-extrabold tracking-tight text-surface-900 dark:text-white font-sans uppercase">Notifications</h2>
+                  <p className="text-sm text-surface-600 dark:text-zinc-400 mt-1 font-medium">Your personal notification feed.</p>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={async () => { try { await api.markAllNotificationsRead(); loadEmpNotifications(); } catch {} }} className="px-4 py-2 rounded-lg text-xs font-bold bg-white dark:bg-zinc-900 border border-surface-200 dark:border-zinc-800 text-surface-700 dark:text-zinc-300 hover:border-brand-900 cursor-pointer transition">
+                    Mark All Read
+                  </button>
+                  <button onClick={loadEmpNotifications} className="px-4 py-2 rounded-lg text-xs font-bold bg-brand-900 hover:bg-brand-800 text-white cursor-pointer transition shadow flex items-center gap-2">
+                    <Bell className="w-4 h-4" /> Refresh
+                  </button>
+                </div>
+              </div>
+
+              {loading.notifications ? (
+                <SkeletonActivityList rows={6} />
+              ) : empNotifications.length === 0 ? (
+                <EmptyState icon="bell" title="No Notifications" subtitle="You're all caught up!" />
+              ) : (
+                <div className="space-y-2">
+                  {empNotifications.map((n: any) => (
+                    <div key={n.id} className={`flex items-start gap-3 p-4 rounded-xl border transition-all ${
+                      n.isRead
+                        ? "bg-white dark:bg-zinc-900 border-surface-200 dark:border-zinc-800"
+                        : "bg-brand-50/50 dark:bg-brand-950/20 border-brand-200 dark:border-brand-800 shadow-sm"
+                    }`}>
+                      <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${n.isRead ? "bg-surface-300 dark:bg-zinc-700" : "bg-brand-900 dark:bg-brand-400"}`} />
+                      <div className="flex-grow">
+                        <p className="text-xs font-semibold text-surface-800 dark:text-zinc-200">{n.message}</p>
+                        <p className="text-[10px] text-surface-400 dark:text-zinc-600 font-mono mt-1">{n.createdAt ? timeAgo(n.createdAt) : "--"}</p>
+                      </div>
+                      {!n.isRead && (
+                        <button
+                          onClick={async () => { try { await api.markNotificationRead(n.id); loadEmpNotifications(); } catch {} }}
+                          className="text-[9px] font-bold text-brand-900 dark:text-brand-400 hover:underline cursor-pointer shrink-0"
+                        >
+                          Mark Read
+                        </button>
                       )}
                     </div>
                   ))}
                 </div>
-              </div>
+              )}
             </div>
           )}
 
-          {/* ─── Tab: Maintenance (Screen 7 Kanban) ─────────────────────────── */}
-          {activeTab === "maintenance" && (
-            <div className="max-w-6xl space-y-8">
-              <div className="flex justify-between items-end">
-                <div>
-                  <h2 className="text-2xl font-extrabold tracking-tight text-surface-900 dark:text-white dark:text-white font-sans uppercase">Maintenance Management</h2>
-                  <p className="text-sm text-surface-600 dark:text-zinc-400 dark:text-zinc-400 mt-1 font-medium">Kanban board workflow for approvals, assignments, and ticket resolution.</p>
-                </div>
-                <button
-                  onClick={() => setShowRequestModal(true)}
-                  className="px-4 py-2 rounded-lg text-sm font-bold bg-brand-900 hover:bg-brand-800 text-white cursor-pointer"
-                >
-                  Raise Ticket
-                </button>
+          {/* â”€â”€â”€ Tab 6: My Profile â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {activeTab === "profile" && (
+            <div className="max-w-3xl space-y-8 animate-float">
+              <div>
+                <h2 className="text-2xl font-extrabold tracking-tight text-surface-900 dark:text-white font-sans uppercase">My Profile</h2>
+                <p className="text-sm text-surface-600 dark:text-zinc-400 mt-1 font-medium">Your personal information and account details.</p>
               </div>
 
-              {/* Kanban board */}
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                {(["Pending", "Approved", "Technician assigned", "In progress", "Resolved"] as const).map(col => (
-                  <div key={col} className="bg-white border border-surface-200 rounded-xl p-4 flex flex-col space-y-3 min-h-[300px] shadow-sm">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-surface-700 dark:text-zinc-300 pb-2 border-b border-surface-150">{col}</h3>
-                    <div className="flex-grow space-y-3">
-                      {maintenanceTickets
-                        .filter(t => t.status === col)
-                        .map(ticket => (
-                          <div 
-                            key={ticket.id} 
-                            className={`border rounded-lg p-3 space-y-2 shadow-sm relative group transition-all ${ticket.status === "Resolved" ? "bg-green-50 border-green-200 text-green-800" : "bg-surface-50 border-surface-200 text-surface-900"}`}
-                          >
-                            <span className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold ${ticket.status === "Resolved" ? "bg-green-200 text-green-900" : "bg-brand-50 text-brand-900"}`}>
-                              {ticket.tag}
-                            </span>
-                            <p className="text-xs font-semibold leading-relaxed pt-1">{ticket.issue}</p>
-                            
-                            {/* Action Button inside card */}
-                            {ticket.status !== "Resolved" && (
-                              <button
-                                onClick={() => advanceTicket(ticket.id)}
-                                className="w-full mt-2 inline-flex items-center justify-center gap-1 text-[10px] font-bold bg-white border border-surface-300 rounded hover:bg-surface-100 py-1 transition cursor-pointer text-surface-700 dark:text-zinc-300"
-                              >
-                                Advance status <ArrowRight className="w-3 h-3" />
-                              </button>
-                            )}
+              {loading.profile ? (
+                <div className="space-y-4">
+                  {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
+                </div>
+              ) : errors.profile ? (
+                <ErrorState message={errors.profile} onRetry={loadMyProfile} />
+              ) : myProfile ? (
+                <div className="space-y-6">
+                  {/* Profile Card */}
+                  <div className="bg-white dark:bg-zinc-900 border border-surface-200 dark:border-zinc-800 rounded-xl p-6 shadow-sm flex items-center gap-6">
+                    <img src={myProfile.avatar || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(myProfile.name || myProfile.id)}`} alt={myProfile.name} className="w-20 h-20 rounded-full bg-surface-100 dark:bg-zinc-800 border-2 border-brand-900/20" />
+                    <div>
+                      <h3 className="text-lg font-extrabold text-surface-900 dark:text-white">{myProfile.name}</h3>
+                      <p className="text-xs text-surface-500 dark:text-zinc-500 font-medium">{myProfile.designation || "Employee"} â€¢ {myProfile.department?.name || "--"}</p>
+                      <p className="text-[10px] text-surface-400 dark:text-zinc-600 font-mono mt-1">{myProfile.employeeId || myProfile.email}</p>
+                    </div>
+                  </div>
+
+                  {/* Details Grid */}
+                  <div className="bg-white dark:bg-zinc-900 border border-surface-200 dark:border-zinc-800 rounded-xl p-6 shadow-sm">
+                    <h4 className="text-sm font-bold text-surface-900 dark:text-white uppercase tracking-wider mb-4">Account Details</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {[
+                        { label: "Email", value: myProfile.email },
+                        { label: "Phone", value: myProfile.phone || "--" },
+                        { label: "Department", value: myProfile.department?.name || "--" },
+                        { label: "Role", value: myProfile.role?.name || "--" },
+                        { label: "Employment Type", value: myProfile.employmentType || "--" },
+                        { label: "Joining Date", value: myProfile.joiningDate ? new Date(myProfile.joiningDate).toLocaleDateString() : "--" },
+                        { label: "Status", value: myProfile.status || "--" },
+                        { label: "Member Since", value: myProfile.createdAt ? new Date(myProfile.createdAt).toLocaleDateString() : "--" },
+                      ].map(f => (
+                        <div key={f.label} className="flex justify-between items-center py-2 border-b border-surface-100 dark:border-zinc-800 last:border-b-0">
+                          <span className="text-[10px] font-bold text-surface-500 dark:text-zinc-500 uppercase tracking-wider">{f.label}</span>
+                          <span className="text-xs font-semibold text-surface-800 dark:text-zinc-200">{f.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Allocated Assets */}
+                  {myProfile.allocatedAssets && myProfile.allocatedAssets.length > 0 && (
+                    <div className="bg-white dark:bg-zinc-900 border border-surface-200 dark:border-zinc-800 rounded-xl p-6 shadow-sm">
+                      <h4 className="text-sm font-bold text-surface-900 dark:text-white uppercase tracking-wider mb-4">Currently Allocated Assets</h4>
+                      <div className="space-y-2">
+                        {myProfile.allocatedAssets.map((a: any) => (
+                          <div key={a.id || a.asset?.id} className="flex items-center justify-between py-2 border-b border-surface-100 dark:border-zinc-800 last:border-b-0">
+                            <span className="text-xs font-bold text-brand-900 dark:text-brand-300 font-mono">{a.asset?.tag || "--"}</span>
+                            <span className="text-xs font-semibold text-surface-700 dark:text-zinc-300">{a.asset?.name || "--"}</span>
                           </div>
                         ))}
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-              <div className="p-4 bg-surface-50 border border-surface-200 rounded-xl text-xs font-bold text-surface-500 dark:text-zinc-500 uppercase tracking-wide">
-                Approving a card moves the asset to under maintenance, resolving return it to available
-              </div>
-            </div>
-          )}
-
-          {/* ─── Tab: Audit (Screen 8) ───────────────────────────────────────── */}
-          {activeTab === "audit" && (
-            <div className="max-w-6xl space-y-8">
-              <div>
-                <h2 className="text-2xl font-extrabold tracking-tight text-surface-900 dark:text-white dark:text-white font-sans uppercase">Asset Audit</h2>
-                <p className="text-sm text-surface-600 dark:text-zinc-400 dark:text-zinc-400 mt-1 font-medium">Verify locations and dynamically trigger discrepancy auto-generation.</p>
-              </div>
-
-              {/* Info Header Banner */}
-              <div className="bg-brand-50 dark:bg-brand-950 border border-brand-200 dark:border-brand-900 rounded-xl p-5 text-brand-900 dark:text-brand-300 shadow-sm">
-                <h3 className="font-extrabold text-base tracking-wide font-sans">Q3 audit: Engineering dept - 1-15 Jul</h3>
-                <p className="text-xs font-semibold text-brand-850 mt-1">Auditors: aditi rao, sana iqbal</p>
-              </div>
-
-              {/* Audit Checklist Table */}
-              <div className="bg-white dark:bg-zinc-900 border border-surface-200 dark:border-zinc-800 rounded-xl overflow-hidden shadow-sm">
-                <table className="w-full text-left text-sm border-collapse">
-                  <thead>
-                    <tr className="bg-surface-50 border-b border-surface-200 text-surface-700 dark:text-zinc-300 font-bold uppercase tracking-wider text-xs">
-                      <th className="p-4">Asset</th>
-                      <th className="p-4">Expected location</th>
-                      <th className="p-4 text-center">Verification (Click to Toggle)</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-surface-150 dark:divide-zinc-800 font-semibold text-surface-850 dark:text-zinc-200">
-                    {auditAssets.map((asset, idx) => (
-                      <tr key={idx} className="hover:bg-surface-50/50 dark:hover:bg-zinc-900/50">
-                        <td className="p-4 font-bold text-surface-900">{asset.tag} {asset.name}</td>
-                        <td className="p-4 text-surface-600 dark:text-zinc-400 font-mono">{asset.location}</td>
-                        <td className="p-4 text-center">
-                          <button
-                            type="button"
-                            onClick={() => toggleAuditStatus(asset.tag)}
-                            disabled={!auditCycleOpen}
-                            className={`inline-flex px-3 py-1 rounded-full text-xs font-bold border transition shadow-sm cursor-pointer ${
-                              asset.status === "Verified" ? "bg-green-50 text-green-700 border-green-200 hover:bg-green-100" :
-                              asset.status === "Missing" ? "bg-red-50 text-red-700 border-red-200 hover:bg-red-100" :
-                              "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
-                            } ${!auditCycleOpen && "opacity-60 cursor-not-allowed"}`}
-                          >
-                            {asset.status}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Warning discrepancy alert banner */}
-              {auditCycleOpen && flaggedAuditsCount > 0 && (
-                <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-sm font-bold tracking-wide flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" />
-                  <span>{flaggedAuditsCount} assets flagged - discrepancy report generated automatically</span>
-                </div>
-              )}
-
-              {/* Action Close Cycle */}
-              <div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAuditCycleOpen(false);
-                    setActivities([
-                      { id: Date.now().toString(), text: `Audit cycle "Q3 Engineering" has been closed by ${username || "Agent"}`, timestamp: "Just now" },
-                      ...activities
-                    ]);
-                  }}
-                  disabled={!auditCycleOpen}
-                  className={`px-5 py-2.5 rounded-lg text-sm font-bold bg-brand-900 hover:bg-brand-800 text-white cursor-pointer transition shadow-sm ${!auditCycleOpen && "bg-surface-300 text-surface-500 cursor-not-allowed hover:bg-surface-300"}`}
-                >
-                  {auditCycleOpen ? "Close audit cycle" : "Audit cycle closed"}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* ─── Tab: Reports & Analytics (Screen 9) ────────────────────────── */}
-          {activeTab === "reports" && (
-            <div className="max-w-6xl space-y-8">
-              <div className="flex justify-between items-center border-b border-surface-200 pb-4">
-                <div>
-                  <h2 className="text-2xl font-extrabold tracking-tight text-surface-900 dark:text-white dark:text-white font-sans uppercase">Reports & Analytics</h2>
-                  <p className="text-sm text-surface-600 dark:text-zinc-400 dark:text-zinc-400 mt-1 font-medium">Verify department utilization and line-graph maintenance frequencies.</p>
-                </div>
-                {/* Reports Mode Selector */}
-                <div className="flex gap-1.5 bg-surface-200/60 dark:bg-zinc-900/60 p-1.5 rounded-xl border border-surface-250 dark:border-zinc-800 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setReportsMode("assets")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${reportsMode === "assets" ? "bg-brand-900 text-white shadow" : "text-surface-700 dark:text-zinc-300 hover:text-surface-900 hover:bg-surface-100"}`}
-                  >
-                    Physical Assets
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setReportsMode("crm")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${reportsMode === "crm" ? "bg-brand-900 text-white shadow" : "text-surface-700 dark:text-zinc-300 hover:text-surface-900 hover:bg-surface-100"}`}
-                  >
-                    CRM Analytics
-                  </button>
-                </div>
-              </div>
-
-              {/* Simulated SVG Charts */}
-              {reportsMode === "assets" ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                  {/* Column Bar chart */}
-                  <div className="bg-white border border-surface-200 rounded-xl p-5 shadow-sm space-y-4">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-surface-500 font-sans flex items-center gap-1.5">
-                      <BarChart4 className="w-4 h-4 text-brand-900" />
-                      Utilization by department
-                    </h3>
-                    <div className="bg-surface-50/50 p-4 border border-surface-200/60 rounded-lg">
-                      <svg className="w-full h-36" viewBox="0 0 300 100">
-                        <line x1="0" y1="90" x2="300" y2="90" stroke="#E9ECEF" strokeWidth="1" />
-                        <line x1="0" y1="50" x2="300" y2="50" stroke="#E9ECEF" strokeWidth="1" strokeDasharray="4" />
-                        {/* Department Columns */}
-                        <rect x="25" y="45" width="16" height="45" rx="3" fill="#003B5C" />
-                        <rect x="65" y="25" width="16" height="65" rx="3" fill="#003B5C" />
-                        <rect x="105" y="10" width="16" height="80" rx="3" fill="#003B5C" />
-                        <rect x="145" y="55" width="16" height="35" rx="3" fill="#003B5C" />
-                        <rect x="185" y="35" width="16" height="55" rx="3" fill="#003B5C" />
-                        <rect x="225" y="20" width="16" height="70" rx="3" fill="#00547d" />
-                        <rect x="265" y="60" width="16" height="30" rx="3" fill="#0098d4" />
-                      </svg>
-                    </div>
-                  </div>
-
-                  {/* Line chart */}
-                  <div className="bg-white border border-surface-200 rounded-xl p-5 shadow-sm space-y-4">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-surface-500 font-sans flex items-center gap-1.5">
-                      <TrendingUp className="w-4 h-4 text-red-600" />
-                      Maintenance Frequency
-                    </h3>
-                    <div className="bg-surface-50/50 p-4 border border-surface-200/60 rounded-lg">
-                      <svg className="w-full h-36" viewBox="0 0 300 100">
-                        <line x1="0" y1="90" x2="300" y2="90" stroke="#E9ECEF" strokeWidth="1" />
-                        {/* Graph path */}
-                        <path 
-                          d="M10,80 L50,60 L90,65 L130,45 L170,55 L210,35 L250,25 L290,15" 
-                          fill="none" 
-                          stroke="#EF4444" 
-                          strokeWidth="2" 
-                        />
-                        <path 
-                          d="M10,80 L50,60 L90,65 L130,45 L170,55 L210,35 L250,25 L290,15 L290,90 L10,90 Z" 
-                          fill="url(#gradient-red)" 
-                          opacity="0.1" 
-                        />
-                        <defs>
-                          <linearGradient id="gradient-red" x1="0%" y1="0%" x2="0%" y2="100%">
-                            <stop offset="0%" stopColor="#EF4444" />
-                            <stop offset="100%" stopColor="#EF4444" stopOpacity="0" />
-                          </linearGradient>
-                        </defs>
-                      </svg>
-                    </div>
-                  </div>
+                  )}
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                  {/* CRM Bar chart */}
-                  <div className="bg-white border border-surface-200 rounded-xl p-5 shadow-sm space-y-4">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-surface-500 font-sans flex items-center gap-1.5">
-                      <BarChart4 className="w-4 h-4 text-brand-900" />
-                      Sync Volume by Platform (thousands)
-                    </h3>
-                    <div className="bg-surface-50/50 p-4 border border-surface-200/60 rounded-lg">
-                      <svg className="w-full h-36" viewBox="0 0 320 100">
-                        <line x1="0" y1="90" x2="320" y2="90" stroke="#E9ECEF" strokeWidth="1" />
-                        <line x1="0" y1="50" x2="320" y2="50" stroke="#E9ECEF" strokeWidth="1" strokeDasharray="4" />
-                        {/* Salesforce, HubSpot, Zoho, Pipedrive, Freshsales, MS Dynamics, Copper, Insightly */}
-                        <rect x="15" y="15" width="14" height="75" rx="3" fill="#003B5C" />
-                        <rect x="55" y="25" width="14" height="65" rx="3" fill="#003B5C" />
-                        <rect x="95" y="35" width="14" height="55" rx="3" fill="#003B5C" />
-                        <rect x="135" y="45" width="14" height="45" rx="3" fill="#003B5C" />
-                        <rect x="175" y="55" width="14" height="35" rx="3" fill="#003B5C" />
-                        <rect x="215" y="65" width="14" height="25" rx="3" fill="#00547d" />
-                        <rect x="255" y="72" width="14" height="18" rx="3" fill="#0098d4" />
-                        <rect x="295" y="80" width="14" height="10" rx="3" fill="#0098d4" />
-                      </svg>
-                    </div>
-                  </div>
-
-                  {/* CRM Line chart */}
-                  <div className="bg-white border border-surface-200 rounded-xl p-5 shadow-sm space-y-4">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-surface-500 font-sans flex items-center gap-1.5">
-                      <TrendingUp className="w-4 h-4 text-brand-900" />
-                      AI Followups vs Conversions
-                    </h3>
-                    <div className="bg-surface-50/50 p-4 border border-surface-200/60 rounded-lg">
-                      <svg className="w-full h-36" viewBox="0 0 300 100">
-                        <line x1="0" y1="90" x2="300" y2="90" stroke="#E9ECEF" strokeWidth="1" />
-                        {/* Red follow-ups */}
-                        <path 
-                          d="M10,80 L50,55 L90,62 L130,35 L170,45 L210,25 L250,15 L290,5" 
-                          fill="none" 
-                          stroke="#EF4444" 
-                          strokeWidth="2" 
-                        />
-                        {/* Blue conversions */}
-                        <path 
-                          d="M10,90 L50,75 L90,80 L130,60 L170,68 L210,50 L250,42 L290,32" 
-                          fill="none" 
-                          stroke="#3B82F6" 
-                          strokeWidth="2" 
-                        />
-                      </svg>
-                    </div>
-                  </div>
-                </div>
+                <EmptyState icon="user" title="Profile Not Found" subtitle="Unable to load your profile data." />
               )}
-
-              {/* Text summaries */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-sm font-semibold text-surface-700 dark:text-zinc-300">
-                {reportsMode === "assets" ? (
-                  <>
-                    {/* Most used */}
-                    <div className="bg-white border border-surface-200 rounded-xl p-6 shadow-sm space-y-3">
-                      <h4 className="font-bold text-surface-900 uppercase tracking-wider text-xs">Most used assets</h4>
-                      <ul className="space-y-2 border-l border-brand-900 pl-3">
-                        <li>Room B2: <span className="text-brand-900 font-bold">34 bookings</span> this month</li>
-                        <li>Van AF-343: <span className="text-brand-900 font-bold">21 trips</span> this month</li>
-                        <li>Projector AF-335: <span className="text-brand-900 font-bold">18 uses</span></li>
-                      </ul>
-                    </div>
-
-                    {/* Retirement */}
-                    <div className="bg-white border border-surface-200 rounded-xl p-6 shadow-sm space-y-3">
-                      <h4 className="font-bold text-surface-900 uppercase tracking-wider text-xs">Assets due for maintenance / nearing retirement</h4>
-                      <ul className="space-y-2 border-l border-amber-500 pl-3">
-                        <li>Forklift AF-0087 : <span className="text-amber-700 font-bold">service due in 5 days</span></li>
-                        <li>Laptop AF-0020 : <span className="text-surface-500">4 years old : nearing retirement</span></li>
-                      </ul>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    {/* CRM Active platforms */}
-                    <div className="bg-white border border-surface-200 rounded-xl p-6 shadow-sm space-y-3">
-                      <h4 className="font-bold text-surface-900 uppercase tracking-wider text-xs">Most Active CRM integrations</h4>
-                      <ul className="space-y-2 border-l border-brand-900 pl-3">
-                        <li>Salesforce CRM: <span className="text-brand-900 font-bold">34k syncs</span> this month</li>
-                        <li>HubSpot CRM: <span className="text-brand-900 font-bold">21k syncs</span> this month</li>
-                        <li>Zoho CRM: <span className="text-brand-900 font-bold">18k syncs</span></li>
-                      </ul>
-                    </div>
-
-                    {/* API keys renewal */}
-                    <div className="bg-white border border-surface-200 rounded-xl p-6 shadow-sm space-y-3">
-                      <h4 className="font-bold text-surface-900 uppercase tracking-wider text-xs">Integrations due for renewal / deprecating</h4>
-                      <ul className="space-y-2 border-l border-amber-500 pl-3">
-                        <li>Copper CRM API token : <span className="text-amber-700 font-bold">token expires in 5 days</span></li>
-                        <li>Insightly integration : <span className="text-surface-500">4 years old : API v2 deprecation warning</span></li>
-                      </ul>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {/* Action Export Button */}
-              <div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const activityText = reportsMode === "assets" 
-                      ? `[Physical Assets Report] Exported asset inventory report.`
-                      : `[CRM Report] Exported CRM sync logs as CSV.`;
-                    const activity: Activity = {
-                      id: Date.now().toString(),
-                      text: activityText,
-                      timestamp: "Just now"
-                    };
-                    setActivities([activity, ...activities]);
-                  }}
-                  className="px-5 py-2.5 rounded-lg text-sm font-bold bg-brand-900 hover:bg-brand-800 text-white cursor-pointer transition shadow-sm"
-                >
-                  Export report
-                </button>
-              </div>
             </div>
           )}
 
-          {/* ─── Tab: Activity logs & Notifications (Screen 10) ─────────────── */}
-          {activeTab === "notifications" && (
-            <div className="max-w-6xl space-y-8">
-              <div>
-                <h2 className="text-2xl font-extrabold tracking-tight text-surface-900 dark:text-white dark:text-white font-sans uppercase">Activity logs & Notifications</h2>
-                <p className="text-sm text-surface-600 dark:text-zinc-400 dark:text-zinc-400 mt-1 font-medium">Verify system audit logs and security-filtered notification feeds.</p>
-              </div>
-
-              {/* Filters */}
-              <div className="flex gap-2 border-b border-surface-200 pb-3">
-                {(["All", "Alerts", "Approvals", "Bookings"] as const).map(tab => (
-                  <button
-                    key={tab}
-                    onClick={() => setLogFilter(tab)}
-                    className={`px-4 py-2 rounded-lg text-sm font-bold cursor-pointer transition-colors ${logFilter === tab ? "bg-brand-900 text-white" : "bg-white border border-surface-200 text-surface-700 dark:text-zinc-300 hover:bg-surface-50"}`}
-                  >
-                    {tab}
-                  </button>
-                ))}
-              </div>
-
-              {/* Logs Checklist */}
-              <div className="bg-white dark:bg-zinc-900 border border-surface-200 dark:border-zinc-800 rounded-xl overflow-hidden shadow-sm divide-y divide-surface-150 font-semibold text-sm text-surface-750">
-                {logs
-                  .filter(l => logFilter === "All" || l.type === logFilter)
-                  .map((log, idx) => (
-                    <div key={idx} className="p-4 flex items-center justify-between hover:bg-surface-50/50 dark:hover:bg-zinc-900/50">
-                      <div className="flex items-center gap-3">
-                        <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${log.color}`} />
-                        <span>{log.text}</span>
-                      </div>
-                      <span className="text-xs text-surface-400 dark:text-zinc-550 font-mono font-normal shrink-0">{log.time}</span>
-                    </div>
-                  ))}
-              </div>
-            </div>
-          )}
-
-          {/* ─── Tab: CRM Demo ────────────────────────────────────────────────── */}
-          {activeTab === "crm" && (
-            <div className="bg-white text-black p-8 rounded-xl max-w-6xl border border-zinc-200 shadow-xl">
-              <div className="flex justify-between items-center mb-6 border-b border-zinc-200 pb-4">
-                <div>
-                  <h2 className="text-2xl font-bold tracking-tight text-zinc-900">AI-Driven Solutions Integration</h2>
-                  <p className="text-sm text-zinc-500 mt-1">Live preview of our customer relations system.</p>
-                </div>
-                <button 
-                  type="button"
-                  onClick={() => setActiveTab("dashboard")} 
-                  className="px-4 py-2 border border-zinc-200 rounded-md text-xs font-semibold hover:bg-zinc-50 transition cursor-pointer"
-                >
-                  Return to Dashboard
-                </button>
-              </div>
-              <FeaturedCrmDemoSection />
-            </div>
-          )}
         </main>
       </div>
-
-      {/* Register Asset Modal */}
-      {showRegisterModal && (
-        <div className="fixed inset-0 z-50 bg-surface-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-zinc-900 border border-surface-200 dark:border-zinc-800 rounded-xl w-full max-w-md p-6 space-y-4 shadow-xl text-surface-900 dark:text-zinc-100">
-            <div className="flex justify-between items-center pb-2 border-b border-surface-200">
-              <h3 className="text-base font-bold text-surface-900 uppercase tracking-wider font-sans">Register New Asset</h3>
-              <button onClick={() => setShowRegisterModal(false)} className="text-surface-400 hover:text-surface-700 dark:text-zinc-300 font-bold">✕</button>
-            </div>
-            <form onSubmit={handleRegisterAsset} className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-surface-600 dark:text-zinc-400 uppercase tracking-wider">Asset Name</label>
-                <input
-                  type="text"
-                  placeholder="e.g. MacBook Pro M3"
-                  value={assetName}
-                  onChange={e => setAssetName(e.target.value)}
-                  className="w-full bg-white border border-surface-300 rounded-lg h-10 px-3 text-sm focus:border-brand-900 focus:ring-brand-900 outline-none text-surface-900 font-semibold"
-                  required
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-surface-600 dark:text-zinc-400 uppercase tracking-wider">Category</label>
-                <select
-                  value={assetCategory}
-                  onChange={e => setAssetCategory(e.target.value)}
-                  className="w-full bg-white border border-surface-300 rounded-lg h-10 px-3 text-sm focus:border-brand-900 focus:ring-brand-900 outline-none text-surface-900 font-semibold"
-                >
-                  <option value="Laptop">Laptop</option>
-                  <option value="Server">Server</option>
-                  <option value="Fleet Car">Fleet Car</option>
-                  <option value="Projector">Projector</option>
-                  <option value="Tools">Tools</option>
-                </select>
-              </div>
-              <button
-                type="submit"
-                className="w-full bg-brand-900 hover:bg-brand-800 text-white rounded-lg h-10 text-sm font-bold uppercase tracking-wider cursor-pointer shadow-sm"
-              >
-                Create Registration
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
       {/* Book Resource Modal */}
       {showBookingModal && (
         <div className="fixed inset-0 z-50 bg-surface-900/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white dark:bg-zinc-900 border border-surface-200 dark:border-zinc-800 rounded-xl w-full max-w-md p-6 space-y-4 shadow-xl text-surface-900 dark:text-zinc-100">
             <div className="flex justify-between items-center pb-2 border-b border-surface-200">
               <h3 className="text-base font-bold text-surface-900 uppercase tracking-wider font-sans">Book Shared Resource</h3>
-              <button onClick={() => setShowBookingModal(false)} className="text-surface-400 hover:text-surface-700 dark:text-zinc-300 font-bold">✕</button>
+              <button onClick={() => setShowBookingModal(false)} className="text-surface-400 hover:text-surface-700 dark:text-zinc-300 font-bold">âœ•</button>
             </div>
             <form onSubmit={handleBookResource} className="space-y-4">
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-surface-600 dark:text-zinc-400 uppercase tracking-wider">Resource</label>
-                <select
-                  value={bookingRoom}
-                  onChange={e => setBookingRoom(e.target.value)}
-                  className="w-full bg-white border border-surface-300 rounded-lg h-10 px-3 text-sm focus:border-brand-900 focus:ring-brand-900 outline-none text-surface-900 font-semibold"
-                >
-                  <option value="Room B2">Boardroom B2</option>
-                  <option value="Tesla Model 3">Tesla Model 3 (Fleet A)</option>
-                  <option value="Testing Lab 2">Testing Lab 2</option>
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-surface-600 dark:text-zinc-400 uppercase tracking-wider">Time Slot</label>
+                <label className="text-xs font-bold text-surface-600 dark:text-zinc-400 uppercase tracking-wider">Resource Name</label>
                 <input
                   type="text"
-                  value={bookingTime}
-                  onChange={e => setBookingTime(e.target.value)}
+                  placeholder="e.g. Conference Room B2"
+                  value={bookingResourceName}
+                  onChange={e => setBookingResourceName(e.target.value)}
                   className="w-full bg-white border border-surface-300 rounded-lg h-10 px-3 text-sm focus:border-brand-900 focus:ring-brand-900 outline-none text-surface-900 font-semibold"
                   required
                 />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-surface-600 dark:text-zinc-400 uppercase tracking-wider">Date</label>
+                <input
+                  type="date"
+                  value={bookingDate}
+                  onChange={e => setBookingDate(e.target.value)}
+                  className="w-full bg-white border border-surface-300 rounded-lg h-10 px-3 text-sm focus:border-brand-900 outline-none text-surface-900 font-semibold"
+                  required
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-surface-600 dark:text-zinc-400 uppercase tracking-wider">Start Time</label>
+                  <input
+                    type="time"
+                    value={bookingStartTime}
+                    onChange={e => setBookingStartTime(e.target.value)}
+                    className="w-full bg-white border border-surface-300 rounded-lg h-10 px-3 text-sm focus:border-brand-900 outline-none text-surface-900 font-semibold"
+                    required
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-surface-600 dark:text-zinc-400 uppercase tracking-wider">End Time</label>
+                  <input
+                    type="time"
+                    value={bookingEndTime}
+                    onChange={e => setBookingEndTime(e.target.value)}
+                    className="w-full bg-white border border-surface-300 rounded-lg h-10 px-3 text-sm focus:border-brand-900 outline-none text-surface-900 font-semibold"
+                    required
+                  />
+                </div>
               </div>
               <button
                 type="submit"
@@ -1403,9 +916,21 @@ export default function Dashboard({
           <div className="bg-white dark:bg-zinc-900 border border-surface-200 dark:border-zinc-800 rounded-xl w-full max-w-md p-6 space-y-4 shadow-xl text-surface-900 dark:text-zinc-100">
             <div className="flex justify-between items-center pb-2 border-b border-surface-200">
               <h3 className="text-base font-bold text-surface-900 uppercase tracking-wider font-sans">Raise Maintenance Request</h3>
-              <button onClick={() => setShowRequestModal(false)} className="text-surface-400 hover:text-surface-700 dark:text-zinc-300 font-bold">✕</button>
+              <button onClick={() => setShowRequestModal(false)} className="text-surface-400 hover:text-surface-700 dark:text-zinc-300 font-bold">âœ•</button>
             </div>
             <form onSubmit={handleRaiseRequest} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-surface-600 dark:text-zinc-400 uppercase tracking-wider">Asset</label>
+                <select
+                  value={requestAssetId}
+                  onChange={e => setRequestAssetId(e.target.value)}
+                  className="w-full bg-white border border-surface-300 rounded-lg h-10 px-3 text-sm focus:border-brand-900 outline-none text-surface-900 font-semibold"
+                  required
+                >
+                  <option value="">Select an asset...</option>
+                  {myAssets.map((a: any) => <option key={a.id} value={a.id}>{a.tag || a.name} - {a.name}</option>)}
+                </select>
+              </div>
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-surface-600 dark:text-zinc-400 uppercase tracking-wider">Issue Description</label>
                 <input
@@ -1428,57 +953,62 @@ export default function Dashboard({
         </div>
       )}
 
-      {/* Add Department Modal (Org Setup Section) */}
-      {showAddDeptModal && (
-        <div className="fixed inset-0 z-50 bg-surface-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+      {/* Request Asset Modal */}
+      {showAssetReqModal && (
+        <div className="fixed inset-0 z-50 bg-zinc-900/40 dark:bg-zinc-950/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white dark:bg-zinc-900 border border-surface-200 dark:border-zinc-800 rounded-xl w-full max-w-md p-6 space-y-4 shadow-xl text-surface-900 dark:text-zinc-100">
-            <div className="flex justify-between items-center pb-2 border-b border-surface-200">
-              <h3 className="text-base font-bold text-surface-900 uppercase tracking-wider font-sans">Add Department</h3>
-              <button onClick={() => setShowAddDeptModal(false)} className="text-surface-400 hover:text-surface-700 dark:text-zinc-300 font-bold">✕</button>
+            <div className="flex justify-between items-center pb-2 border-b border-surface-200 dark:border-zinc-800">
+              <div>
+                <h3 className="text-base font-bold text-surface-900 dark:text-white uppercase tracking-wider font-sans">Request Asset Allocation</h3>
+                <p className="text-xs text-surface-500 dark:text-zinc-400 font-medium">Select an available asset to submit a request to Admin.</p>
+              </div>
+              <button onClick={() => setShowAssetReqModal(false)} className="text-surface-400 hover:text-surface-700 dark:text-zinc-300 font-bold">✕</button>
             </div>
-            <form onSubmit={handleAddDept} className="space-y-4">
+            <form onSubmit={handleAssetRequestSubmit} className="space-y-4">
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-surface-600 dark:text-zinc-400 uppercase tracking-wider">Department Name</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Engineering, Sales"
-                  value={newDeptName}
-                  onChange={e => setNewDeptName(e.target.value)}
-                  className="w-full bg-white border border-surface-300 rounded-lg h-10 px-3 text-sm focus:border-brand-900 outline-none text-surface-900 font-semibold"
+                <label className="text-xs font-bold text-surface-600 dark:text-zinc-400 uppercase tracking-wider">Available Asset <span className="text-red-500">*</span></label>
+                <select
+                  value={assetReqAssetId}
+                  onChange={e => setAssetReqAssetId(e.target.value)}
+                  className="w-full bg-white dark:bg-zinc-950 border border-surface-300 dark:border-zinc-800 rounded-lg h-10 px-3 text-xs focus:border-brand-900 outline-none text-surface-900 dark:text-zinc-100 font-semibold"
                   required
-                />
+                >
+                  <option value="">Choose an available asset...</option>
+                  {availableAssets.map((a: any) => (
+                    <option key={a.id} value={a.id}>
+                      [{a.tag}] {a.name} ({a.category?.name || "General"}) - {a.location || "Warehouse"}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-surface-600 dark:text-zinc-400 uppercase tracking-wider">Department Head</label>
+                <label className="text-xs font-bold text-surface-600 dark:text-zinc-400 uppercase tracking-wider">Reason for Request</label>
                 <input
                   type="text"
-                  placeholder="e.g. Priya Shah"
-                  value={newDeptHead}
-                  onChange={e => setNewDeptHead(e.target.value)}
-                  className="w-full bg-white border border-surface-300 rounded-lg h-10 px-3 text-sm focus:border-brand-900 outline-none text-surface-900 font-semibold"
-                  required
+                  placeholder="e.g. Primary work laptop replacement"
+                  value={assetReqReason}
+                  onChange={e => setAssetReqReason(e.target.value)}
+                  className="w-full bg-white dark:bg-zinc-950 border border-surface-300 dark:border-zinc-800 rounded-lg h-10 px-3 text-xs focus:border-brand-900 outline-none text-surface-900 dark:text-zinc-100 font-semibold"
                 />
               </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-surface-600 dark:text-zinc-400 uppercase tracking-wider">Parent Department</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Operations, IT"
-                  value={newDeptParent}
-                  onChange={e => setNewDeptParent(e.target.value)}
-                  className="w-full bg-white border border-surface-300 rounded-lg h-10 px-3 text-sm focus:border-brand-900 outline-none text-surface-900 font-semibold"
-                />
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setShowAssetReqModal(false)} className="flex-grow bg-white dark:bg-zinc-900 hover:bg-surface-50 dark:hover:bg-zinc-800 border border-surface-300 dark:border-zinc-800 text-surface-700 dark:text-zinc-300 rounded-lg h-10 text-xs font-bold uppercase tracking-wider cursor-pointer">Cancel</button>
+                <button type="submit" className="flex-grow bg-brand-900 hover:bg-brand-800 text-white rounded-lg h-10 text-xs font-bold uppercase tracking-wider cursor-pointer shadow-sm">
+                  Submit Request
+                </button>
               </div>
-              <button
-                type="submit"
-                className="w-full bg-brand-900 hover:bg-brand-800 text-white rounded-lg h-10 text-sm font-bold uppercase tracking-wider cursor-pointer shadow-sm"
-              >
-                Create Department
-              </button>
             </form>
           </div>
         </div>
       )}
+
+      {/* ─── ENTERPRISE COMMAND PALETTE ─────────────────────────────────── */}
+      <CommandPalette 
+        isOpen={showCommandPalette} 
+        onClose={() => setShowCommandPalette(false)} 
+        onNavigateTab={(tabId) => setActiveTab(tabId)} 
+        userRole="EMPLOYEE"
+      />
     </div>
   );
 }

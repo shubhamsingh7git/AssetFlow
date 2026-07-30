@@ -12,15 +12,23 @@ class BookingRepository {
   }
 
   async findById(id: string) {
-    return prisma.booking.findUnique({ where: { id }, include: { user: { select: { id: true, name: true } }, asset: true } });
+    return prisma.booking.findUnique({ where: { id }, include: { user: { select: { id: true, name: true, email: true } }, asset: true } });
   }
 
   async create(data: Prisma.BookingCreateInput) {
-    return prisma.booking.create({ data, include: { user: { select: { id: true, name: true } } } });
+    return prisma.booking.create({ data, include: { user: { select: { id: true, name: true, email: true } } } });
   }
 
   async cancel(id: string) {
     return prisma.booking.update({ where: { id }, data: { status: 'CANCELLED' } });
+  }
+
+  async updateStatus(id: string, status: 'CONFIRMED' | 'REJECTED' | 'CANCELLED') {
+    return prisma.booking.update({
+      where: { id },
+      data: { status },
+      include: { user: { select: { id: true, name: true, email: true } } },
+    });
   }
 
   async checkOverlap(resourceName: string, date: Date, startTime: string, endTime: string, excludeId?: string): Promise<boolean> {

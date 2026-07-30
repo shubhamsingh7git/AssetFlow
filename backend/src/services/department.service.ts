@@ -1,13 +1,20 @@
 // ─── Department Service ─────────────────────────────────────────────────────
 import departmentRepo from '../repositories/department.repository';
+import userRepo from '../repositories/user.repository';
 import activityLogRepo from '../repositories/activitylog.repository';
 import { AppError } from '../middlewares/errorHandler';
 import { parsePagination } from '../utils/pagination';
 
 class DepartmentService {
-  async getAll(query: Record<string, any>) {
+  async getAll(query: Record<string, any>, userId?: string) {
     const { skip, take, orderBy } = parsePagination(query);
     const where: any = {};
+    if (userId) {
+      const user = await userRepo.findById(userId);
+      if (user?.organizationId) {
+        where.organizationId = user.organizationId;
+      }
+    }
     if (query.search) {
       where.OR = [
         { name: { contains: query.search, mode: 'insensitive' } },
@@ -25,10 +32,13 @@ class DepartmentService {
   }
 
   async create(data: any, userId: string) {
-    const existing = await departmentRepo.findByName(data.name);
-    if (existing) throw new AppError('Department name already exists', 409);
+    const user = await userRepo.findById(userId);
+    const orgId = user?.organizationId || data.organizationId;
+    const existing = await departmentRepo.findByName(data.name, orgId || undefined);
+    if (existing) throw new AppError('Department name already exists in this organization', 409);
 
     const createData: any = { name: data.name, description: data.description, status: data.status || 'ACTIVE' };
+    if (orgId) createData.organization = { connect: { id: orgId } };
     if (data.parentId) createData.parent = { connect: { id: data.parentId } };
     if (data.headId) createData.head = { connect: { id: data.headId } };
 

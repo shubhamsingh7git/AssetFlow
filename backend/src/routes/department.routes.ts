@@ -6,12 +6,13 @@ import { authenticate, authorize } from '../middlewares/auth';
 const router = Router();
 
 router.use(authenticate);
+router.use(authorize('Administrator'));
 
 router.get('/', departmentController.getAll);
 router.get('/:id', departmentController.getById);
-router.post('/', authorize('Administrator'), departmentController.create);
-router.patch('/:id', authorize('Administrator'), departmentController.update);
-router.patch('/:id/status', authorize('Administrator'), departmentController.toggleStatus);
-router.delete('/:id', authorize('Administrator'), departmentController.delete);
+router.post('/', departmentController.create);
+router.patch('/:id', departmentController.update);
+router.patch('/:id/status', departmentController.toggleStatus);
+router.delete('/:id', departmentController.delete);
 
 export default router;

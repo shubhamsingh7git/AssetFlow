@@ -56,12 +56,22 @@ export async function authenticate(
       throw new AppError('Account has been deactivated', 403);
     }
 
+    if (user.isLocked && user.lockedUntil && user.lockedUntil > new Date()) {
+      throw new AppError('Account is locked. Contact your administrator.', 403);
+    }
+
+    // Enforce password change before allowing general API access
+    if (user.forcePasswordChange && !['/change-password', '/me', '/logout'].some(p => req.originalUrl.includes(p))) {
+      throw new AppError('Password change required. Please change your temporary password to continue.', 403);
+    }
+
     // Attach user to request
     req.user = {
       id: user.id,
       userId: user.id,
       email: user.email,
       role: user.role.name,
+      organizationId: user.organizationId || undefined,
     };
 
     next();

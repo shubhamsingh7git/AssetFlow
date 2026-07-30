@@ -1,37 +1,37 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="32" height="32" fill="#003B5C">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="32" height="32" fill="#4f46e5">
   <!-- Outer gear rim -->
-  <circle cx="50" cy="50" r="36" fill="none" stroke="#003B5C" stroke-width="8" />
+  <circle cx="50" cy="50" r="36" fill="none" stroke="#4f46e5" stroke-width="8" />
 
   <!-- Inner white circle boundary -->
   <circle cx="50" cy="50" r="30" fill="none" stroke="white" stroke-width="4" />
 
   <!-- Solid center circle -->
-  <circle cx="50" cy="50" r="23" fill="#003B5C" />
+  <circle cx="50" cy="50" r="23" fill="#4f46e5" />
 
-  <!-- White Dollar sign -->
+  <!-- White Rupee sign -->
   <text 
     x="50" 
-    y="59" 
+    y="58" 
     font-family="sans-serif" 
-    font-size="26" 
+    font-size="24" 
     font-weight="bold" 
     fill="white" 
     text-anchor="middle"
   >
-    $
+    ₹
   </text>
 
   <!-- Gear teeth rotated around center -->
-  <rect x="45" y="4" width="10" height="12" rx="2" fill="#003B5C" transform="rotate(0 50 50)" />
-  <rect x="45" y="4" width="10" height="12" rx="2" fill="#003B5C" transform="rotate(-45 50 50)" />
-  <rect x="45" y="4" width="10" height="12" rx="2" fill="#003B5C" transform="rotate(-90 50 50)" />
-  <rect x="45" y="4" width="10" height="12" rx="2" fill="#003B5C" transform="rotate(-135 50 50)" />
-  <rect x="45" y="4" width="10" height="12" rx="2" fill="#003B5C" transform="rotate(180 50 50)" />
-  <rect x="45" y="4" width="10" height="12" rx="2" fill="#003B5C" transform="rotate(135 50 50)" />
-  <rect x="45" y="4" width="10" height="12" rx="2" fill="#003B5C" transform="rotate(90 50 50)" />
+  <rect x="45" y="4" width="10" height="12" rx="2" fill="#4f46e5" transform="rotate(0 50 50)" />
+  <rect x="45" y="4" width="10" height="12" rx="2" fill="#4f46e5" transform="rotate(-45 50 50)" />
+  <rect x="45" y="4" width="10" height="12" rx="2" fill="#4f46e5" transform="rotate(-90 50 50)" />
+  <rect x="45" y="4" width="10" height="12" rx="2" fill="#4f46e5" transform="rotate(-135 50 50)" />
+  <rect x="45" y="4" width="10" height="12" rx="2" fill="#4f46e5" transform="rotate(180 50 50)" />
+  <rect x="45" y="4" width="10" height="12" rx="2" fill="#4f46e5" transform="rotate(135 50 50)" />
+  <rect x="45" y="4" width="10" height="12" rx="2" fill="#4f46e5" transform="rotate(90 50 50)" />
 
   <!-- Sun rays in top-right quadrant -->
-  <line x1="50" y1="12" x2="50" y2="2" stroke="#003B5C" stroke-width="4" stroke-linecap="round" transform="rotate(25 50 50)" />
-  <line x1="50" y1="12" x2="50" y2="2" stroke="#003B5C" stroke-width="4" stroke-linecap="round" transform="rotate(47.5 50 50)" />
-  <line x1="50" y1="12" x2="50" y2="2" stroke="#003B5C" stroke-width="4" stroke-linecap="round" transform="rotate(70 50 50)" />
+  <line x1="50" y1="12" x2="50" y2="2" stroke="#4f46e5" stroke-width="4" stroke-linecap="round" transform="rotate(25 50 50)" />
+  <line x1="50" y1="12" x2="50" y2="2" stroke="#4f46e5" stroke-width="4" stroke-linecap="round" transform="rotate(47.5 50 50)" />
+  <line x1="50" y1="12" x2="50" y2="2" stroke="#4f46e5" stroke-width="4" stroke-linecap="round" transform="rotate(70 50 50)" />
 </svg>

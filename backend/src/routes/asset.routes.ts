@@ -8,7 +8,14 @@ const router = Router();
 
 router.use(authenticate);
 
-router.get('/', assetController.getAll);
+// Employee: view own assigned assets
+router.get('/my-assets', assetController.getMyAssets);
+
+// Tag generator
+router.get('/generate-tag', authorize('Administrator', 'Asset Manager'), assetController.generateTag);
+
+// Admin/Manager/Employee: asset registry
+router.get('/', authorize('Administrator', 'Asset Manager', 'Employee', 'Department Head'), assetController.getAll);
 router.get('/:id', assetController.getById);
 router.get('/:id/history', assetController.getHistory);
 router.post('/', authorize('Administrator', 'Asset Manager'), assetController.create);

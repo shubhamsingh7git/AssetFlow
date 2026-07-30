@@ -8,6 +8,7 @@ const router = Router();
 router.use(authenticate);
 
 router.get('/', authorize('Administrator'), userController.getAll);
+router.post('/', authorize('Administrator'), userController.create);
 router.get('/:id', userController.getById);
 router.patch('/:id', authorize('Administrator'), userController.update);
 router.patch('/:id/role', authorize('Administrator'), userController.assignRole);

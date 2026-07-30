@@ -71,7 +71,7 @@ export default function Navbar({
                 onClick={onLoginClick}
                 className="inline-flex items-center justify-center px-4 py-2 border border-transparent rounded-md text-sm font-bold bg-brand-900 hover:bg-brand-800 text-white shadow-sm transition-all font-sans cursor-pointer"
               >
-                Login
+                Login / Sign Up
               </button>
             )}
           </div>
@@ -130,7 +130,7 @@ export default function Navbar({
                 }}
                 className="text-center py-2.5 rounded-md text-base font-bold bg-brand-900 hover:bg-brand-800 text-white shadow-sm cursor-pointer"
               >
-                Login
+                Login / Sign Up
               </button>
             )}
           </div>

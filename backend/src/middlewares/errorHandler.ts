@@ -7,10 +7,14 @@ import { JsonWebTokenError, TokenExpiredError } from 'jsonwebtoken';
 export class AppError extends Error {
   public statusCode: number;
   public isOperational: boolean;
+  public reason?: string;
+  public field?: string;
 
-  constructor(message: string, statusCode: number, isOperational = true) {
+  constructor(message: string, statusCode: number, reason?: string, field?: string, isOperational = true) {
     super(message);
     this.statusCode = statusCode;
+    this.reason = reason || message;
+    this.field = field;
     this.isOperational = isOperational;
     Object.setPrototypeOf(this, AppError.prototype);
   }
@@ -25,18 +29,27 @@ export function errorHandler(
   // Default values
   let statusCode = 500;
   let message = 'Internal server error';
+  let reason: string | undefined = undefined;
+  let field: string | undefined = undefined;
   let errors: any = undefined;
 
   // ─── AppError (our custom errors) ───────────────────────────────────────
   if (err instanceof AppError) {
     statusCode = err.statusCode;
     message = err.message;
+    reason = err.reason || err.message;
+    field = err.field;
   }
 
   // ─── Zod Validation Errors ──────────────────────────────────────────────
   else if (err instanceof ZodError) {
     statusCode = 400;
-    message = 'Validation failed';
+    const firstErr = err.errors[0];
+    const fieldName = firstErr ? firstErr.path.join('.') : undefined;
+    const errMsg = firstErr ? firstErr.message : 'Invalid request data';
+    message = fieldName ? `Validation failed for '${fieldName}': ${errMsg}` : `Validation failed: ${errMsg}`;
+    reason = fieldName ? `Field '${fieldName}' failed validation: ${errMsg}` : errMsg;
+    field = fieldName || undefined;
     errors = err.errors.map((e) => ({
       field: e.path.join('.'),
       message: e.message,
@@ -80,12 +93,15 @@ export function errorHandler(
 
   // ─── Log in development ─────────────────────────────────────────────────
   if (process.env.NODE_ENV === 'development') {
-    console.error('🔴 Error:', err);
+    console.error('🔴 Error:', err?.message || err);
   }
 
   res.status(statusCode).json({
     success: false,
     message,
+    error: message,
+    ...(reason && { reason }),
+    ...(field && { field }),
     ...(errors && { errors }),
     ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
   });
@@ -93,8 +109,10 @@ export function errorHandler(
 
 // 404 handler for unknown routes
 export function notFoundHandler(req: Request, res: Response): void {
+  const msg = `Route ${req.method} ${req.originalUrl} not found`;
   res.status(404).json({
     success: false,
-    message: `Route ${req.method} ${req.originalUrl} not found`,
+    message: msg,
+    error: msg,
   });
 }

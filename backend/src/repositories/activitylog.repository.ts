@@ -11,7 +11,7 @@ class ActivityLogRepository {
     return { data, total };
   }
 
-  async create(data: { action: string; targetResource?: string; targetId?: string; details?: string; category?: string; userId: string }) {
+  async create(data: { action: string; targetResource?: string; targetId?: string; details?: string; category?: string; userId: string; organizationId?: string }) {
     return prisma.activityLog.create({ data, include: { user: { select: { id: true, name: true } } } });
   }
 }

@@ -60,6 +60,25 @@ class AllocationController {
       sendSuccess(res, transfer, 'Transfer rejected');
     } catch (error) { next(error); }
   }
+
+  async getMyTransfers(req: Request, res: Response, next: NextFunction) {
+    try {
+      const data = await allocationService.getMyTransfers(req.user!.id);
+      sendSuccess(res, data);
+    } catch (error) { next(error); }
+  }
+
+  async createEmployeeTransferRequest(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { assetId, reason } = req.body;
+      if (!assetId) {
+        res.status(400).json({ success: false, message: 'assetId is required' });
+        return;
+      }
+      const transfer = await allocationService.createEmployeeTransferRequest(assetId, reason, req.user!.id);
+      sendSuccess(res, transfer, 'Transfer request submitted', 201);
+    } catch (error) { next(error); }
+  }
 }
 
 export default new AllocationController();

@@ -21,6 +21,7 @@ enum UserStatus {
 enum AssetStatus {
   AVAILABLE
   ALLOCATED
+  RESERVED
   MAINTENANCE
   LOST
   DISPOSED
@@ -49,19 +50,31 @@ enum AuditItemStatus {
   DAMAGED
 }
 
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum BookingStatus {
+  PENDING
   CONFIRMED
+  REJECTED
   CANCELLED
   COMPLETED
 }
 
 enum NotificationType {
+  ASSET_REQUESTED
   ASSET_ASSIGNED
+  ASSET_REJECTED
   ASSET_RETURNED
   TRANSFER_REQUESTED
   TRANSFER_APPROVED
   TRANSFER_REJECTED
+  BOOKING_REQUESTED
   BOOKING_CONFIRMED
+  BOOKING_REJECTED
   BOOKING_CANCELLED
   BOOKING_REMINDER
   MAINTENANCE_REQUESTED
@@ -69,10 +82,49 @@ enum NotificationType {
   MAINTENANCE_RESOLVED
   AUDIT_ASSIGNED
   OVERDUE_RETURN
+  EMPLOYEE_CREATED
+  DEPARTMENT_CREATED
+  CATEGORY_CREATED
+  EMPLOYEE_LOGIN
   GENERAL
 }
 
 // ─── Models ─────────────────────────────────────────────────────────────────
+
+model Organization {
+  id                  String   @id @default(cuid())
+  name                String
+  slug                String?  @unique
+  logo                String?
+  industry            String?
+  companySize         String?
+  country             String?
+  timezone            String?
+  currency            String?  @default("USD")
+  address             String?
+  website             String?
+  description         String?
+  onboardingStep      String   @default("ORGANIZATION") // ORGANIZATION | DEPARTMENTS | EMPLOYEES | ASSETS | COMPLETED
+  onboardingCompleted Boolean  @default(false)
+  createdBy           String?
+
+  users               User[]
+  departments         Department[]
+  categories          AssetCategory[]
+  assets              Asset[]
+  assetRequests       AssetRequest[]
+  bookings            Booking[]
+  maintenanceRequests MaintenanceRequest[]
+  auditCycles         AuditCycle[]
+  notifications       Notification[]
+  activityLogs        ActivityLog[]
+  reports             Report[]
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@map("organizations")
+}
 
 model Role {
   id        String   @id @default(cuid())
@@ -88,22 +140,58 @@ model User {
   id           String     @id @default(cuid())
   name         String
   email        String     @unique
-  password     String
+  password     String?
   avatar       String?
   status       UserStatus @default(ACTIVE)
+
+  // OAuth fields
+  googleId     String?    @unique
+  provider     String     @default("local")  // "local" | "google"
   
   roleId       String
   role         Role       @relation(fields: [roleId], references: [id])
   
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  isOrganizationOwner Boolean  @default(false)
+
   departmentId String?
   department   Department? @relation("DepartmentEmployees", fields: [departmentId], references: [id])
 
   // Refresh token for JWT rotation
   refreshToken String?
 
+  // Password reset token fields for Admin Forgot Password
+  resetPasswordToken        String?
+  resetPasswordTokenExpires DateTime?
+
+  // ─── Employee Management Fields ───────────────────────────────────────
+  employeeId          String?    // Custom employee ID (e.g. EMP-001)
+  phone               String?
+  designation         String?    // Job title
+  employmentType      String?    @default("full-time") // full-time, part-time, contract, intern
+  joiningDate         DateTime?
+  forcePasswordChange Boolean    @default(true)
+  passwordUpdatedAt   DateTime?
+  failedLoginAttempts Int        @default(0)
+  isLocked            Boolean    @default(false)
+  lockedUntil         DateTime?
+  isDeleted           Boolean    @default(false)
+  lastLoginAt         DateTime?
+
+  // Manager self-relation
+  managerId           String?
+  manager             User?      @relation("ManagerReports", fields: [managerId], references: [id])
+  directReports       User[]     @relation("ManagerReports")
+
+  // Who created this employee account
+  createdById         String?
+
   // Relations
   allocatedAssets   AssetAllocation[]   @relation("AllocatedTo")
   assetHistory      AssetHistory[]
+  assetRequests     AssetRequest[]      @relation("AssetRequester")
+  requestApprovals  AssetRequest[]      @relation("AssetRequestApprover")
   transfersFrom     TransferRequest[]   @relation("TransferFrom")
   transfersTo       TransferRequest[]   @relation("TransferTo")
   transferApprovals TransferRequest[]   @relation("TransferApprover")
@@ -125,9 +213,12 @@ model User {
 
 model Department {
   id          String     @id @default(cuid())
-  name        String     @unique
+  name        String
   description String?
   status      UserStatus @default(ACTIVE)
+
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
 
   // Self-relation for parent/child hierarchy
   parentId    String?
@@ -141,6 +232,9 @@ model Department {
   // Employees in this department
   employees   User[]     @relation("DepartmentEmployees")
 
+  // Assets in this department
+  assets      Asset[]
+
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 
@@ -149,10 +243,13 @@ model Department {
 
 model AssetCategory {
   id          String     @id @default(cuid())
-  name        String     @unique
+  name        String
   description String?
   iconName    String     @default("Laptop")
   status      UserStatus @default(ACTIVE)
+
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
 
   assets       Asset[]
   customFields CustomField[]
@@ -177,25 +274,55 @@ model CustomField {
 
 model Asset {
   id           String      @id @default(cuid())
-  tag          String      @unique // e.g. AF-0012
+  tag          String      @unique // Asset Code (e.g. AF-0012)
   name         String
-  serialNumber String?
+  type         String?     // Laptop, Phone, Server, Vehicle, Furniture, etc.
+  manufacturer String?
+  model        String?
+  serialNumber String?     @unique
+  barcode      String?     @unique // Barcode / QR Code
   qrCode       String?
+  description  String?
   status       AssetStatus @default(AVAILABLE)
   location     String?
+
+  // Location Details
+  building     String?
+  floor        String?
+  room         String?
+  storageLocation String?
+
+  // Media & Attachments
   imageUrl     String?
-  purchaseDate DateTime?
-  purchaseCost Float?
+  documentUrl  String?
+  notes        String?
+
+  // Purchase & Ownership Details
+  purchaseDate   DateTime?
+  purchaseCost   Float?
+  currentValue   Float?
   warrantyExpiry DateTime?
+  expectedLifeMonths Int?
+  depreciationMethod String?
+  vendor         String?
+  poNumber       String?
+  invoiceNumber  String?
+
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
 
   categoryId   String
   category     AssetCategory @relation(fields: [categoryId], references: [id])
+
+  departmentId String?
+  department   Department?   @relation(fields: [departmentId], references: [id])
 
   // Current allocation
   allocatedToId String?
 
   // Relations
   allocations   AssetAllocation[]
+  requests      AssetRequest[]
   history       AssetHistory[]
   transfers     TransferRequest[]
   maintenance   MaintenanceRequest[]
@@ -240,6 +367,29 @@ model AssetAllocation {
   @@map("asset_allocations")
 }
 
+model AssetRequest {
+  id           String        @id @default(cuid())
+  reason       String?
+  status       RequestStatus @default(PENDING)
+
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
+  assetId      String
+  asset        Asset         @relation(fields: [assetId], references: [id])
+
+  userId       String
+  user         User          @relation("AssetRequester", fields: [userId], references: [id])
+
+  approvedById String?
+  approvedBy   User?         @relation("AssetRequestApprover", fields: [approvedById], references: [id])
+
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@map("asset_requests")
+}
+
 model TransferRequest {
   id       String         @id @default(cuid())
   reason   String?
@@ -270,8 +420,11 @@ model Booking {
   date         DateTime
   startTime    String        // "09:00"
   endTime      String        // "10:00"
-  status       BookingStatus @default(CONFIRMED)
+  status       BookingStatus @default(PENDING)
   notes        String?
+
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
 
   userId       String
   user         User          @relation(fields: [userId], references: [id])
@@ -295,6 +448,9 @@ model MaintenanceRequest {
   resolvedAt     DateTime?
   notes          String?
 
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
   assetId        String
   asset          Asset             @relation(fields: [assetId], references: [id])
 
@@ -314,6 +470,9 @@ model AuditCycle {
   startDate  DateTime
   endDate    DateTime
   isOpen     Boolean    @default(true)
+
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
 
   items      AuditItem[]
   auditors   User[]     @relation("AuditAuditors")
@@ -343,6 +502,9 @@ model Notification {
   message String
   isRead  Boolean          @default(false)
 
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
   userId  String
   user    User             @relation(fields: [userId], references: [id])
 
@@ -359,6 +521,9 @@ model ActivityLog {
   details        String?
   category       String?  // "Alerts", "Approvals", "Bookings"
 
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
   userId         String
   user           User     @relation(fields: [userId], references: [id])
 
@@ -373,6 +538,9 @@ model Report {
   title       String
   data        Json?    // Flexible JSON blob for report data
   generatedAt DateTime @default(now())
+
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
 
   generatedById String
   generatedBy   User   @relation(fields: [generatedById], references: [id])

@@ -15,17 +15,17 @@ export default function Logo({ className = "w-6 h-6 text-white" }: { className?:
       {/* Solid center circle */}
       <circle cx="50" cy="50" r="23" fill="currentColor" />
 
-      {/* White Dollar sign */}
+      {/* White Rupee sign */}
       <text 
         x="50" 
-        y="59" 
+        y="58" 
         fontFamily="sans-serif" 
-        fontSize="26" 
+        fontSize="24" 
         fontWeight="bold" 
         fill="white" 
         textAnchor="middle"
       >
-        $
+        ₹
       </text>
 
       {/* Gear teeth rotated around center (excluding top-right 45 deg quadrant) */}

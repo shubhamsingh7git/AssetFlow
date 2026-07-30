@@ -15,7 +15,7 @@ class CategoryRepository {
     return prisma.assetCategory.findUnique({ where: { id }, include: { customFields: true, _count: { select: { assets: true } } } });
   }
 
-  async findByName(name: string) { return prisma.assetCategory.findUnique({ where: { name } }); }
+  async findByName(name: string) { return prisma.assetCategory.findFirst({ where: { name } }); }
 
   async create(data: Prisma.AssetCategoryCreateInput) {
     return prisma.assetCategory.create({ data, include: { customFields: true, _count: { select: { assets: true } } } });

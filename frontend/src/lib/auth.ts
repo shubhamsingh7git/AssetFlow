@@ -1,6 +1,6 @@
 /**
  * DARE Authentication Service for AssetFlow
- * Handles JWT token storage, login, register, and auth state.
+ * Handles JWT token storage, login, admin register, Google OAuth, and auth state.
  * Connected to the Express backend — no mock fallbacks.
  */
 
@@ -24,6 +24,25 @@ export interface UserResponse {
   role?: "Employee" | "Department Head" | "Asset Manager" | "Administrator";
   department?: string | null;
   departmentId?: string | null;
+  provider?: string;
+  organizationId?: string | null;
+  isOrganizationOwner?: boolean;
+  onboardingCompleted?: boolean;
+  onboardingStep?: string;
+  forcePasswordChange?: boolean;
+  organization?: {
+    id: string;
+    name: string;
+    slug?: string;
+    logo?: string;
+    industry?: string;
+    companySize?: string;
+    country?: string;
+    timezone?: string;
+    currency?: string;
+    onboardingStep?: string;
+    onboardingCompleted?: boolean;
+  } | null;
 }
 
 // ─── Token Storage ──────────────────────────────────────────────────────────
@@ -73,6 +92,48 @@ export function cacheUser(user: UserResponse): void {
 
 // ─── API Calls (Real Backend) ───────────────────────────────────────────────
 
+/**
+ * Company Admin Registration — creates Organization + Admin User
+ */
+export async function adminRegister(
+  companyName: string,
+  adminName: string,
+  email: string,
+  password: string
+): Promise<TokenResponse> {
+  const response = await fetch(`${API_BASE}/api/auth/admin-register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ companyName, adminName, email, password }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.message || data.detail || `Registration failed (${response.status})`);
+  }
+
+  const result = data.data || data;
+  setToken(result.access_token);
+
+  if (result.user) {
+    cacheUser(result.user);
+  } else {
+    try {
+      const user = await getCurrentUser();
+      cacheUser(user);
+    } catch {
+      // Non-critical
+    }
+  }
+
+  return {
+    access_token: result.access_token,
+    token_type: result.token_type || "bearer",
+  };
+}
+
 export async function login(email: string, password: string): Promise<TokenResponse> {
   const response = await fetch(`${API_BASE}/api/auth/login`, {
     method: "POST",
@@ -100,44 +161,6 @@ export async function login(email: string, password: string): Promise<TokenRespo
       cacheUser(user);
     } catch {
       // Non-critical — we have the token
-    }
-  }
-
-  return {
-    access_token: result.access_token,
-    token_type: result.token_type || "bearer",
-  };
-}
-
-export async function register(
-  email: string,
-  password: string,
-  username: string
-): Promise<TokenResponse> {
-  const response = await fetch(`${API_BASE}/api/auth/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ email, username, password }),
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(data.message || data.detail || `Registration failed (${response.status})`);
-  }
-
-  const result = data.data || data;
-  setToken(result.access_token);
-
-  if (result.user) {
-    cacheUser(result.user);
-  } else {
-    try {
-      const user = await getCurrentUser();
-      cacheUser(user);
-    } catch {
-      // Non-critical
     }
   }
 
@@ -176,4 +199,27 @@ export function logout(): void {
     credentials: "include",
   }).catch(() => {});
   clearToken();
+}
+
+// ─── Google OAuth ───────────────────────────────────────────────────────────
+
+/**
+ * Returns the URL to redirect the browser to for Google OAuth consent.
+ * This hits the backend endpoint which constructs the Google URL and redirects.
+ */
+export function getGoogleAuthUrl(): string {
+  return `${API_BASE}/api/auth/google`;
+}
+
+/**
+ * Handle the token received from Google OAuth callback redirect.
+ * Stores the token and fetches the user profile.
+ */
+export async function handleGoogleCallback(token: string): Promise<UserResponse> {
+  setToken(token);
+
+  const user = await getCurrentUser();
+  cacheUser(user);
+
+  return user;
 }

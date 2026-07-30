@@ -7,12 +7,20 @@ import { parsePagination } from '../utils/pagination';
 import { getParam } from '../utils/params';
 import { updateUserSchema, assignRoleSchema } from '../validators/common.validator';
 import { AppError } from '../middlewares/errorHandler';
+import prisma from '../config/database';
+import { hashPassword } from '../utils/password';
 
 class UserController {
   async getAll(req: Request, res: Response, next: NextFunction) {
     try {
       const { skip, take, orderBy, page, limit } = parsePagination(req.query as any);
+      const currentUser = await userRepository.findById(req.user!.id);
       const where: any = {};
+      
+      if (currentUser?.organizationId) {
+        where.organizationId = currentUser.organizationId;
+      }
+
       const search = req.query.search as string;
       if (search) {
         where.OR = [
@@ -30,6 +38,51 @@ class UserController {
         return safe;
       });
       sendPaginated(res, sanitized, total, page, limit);
+    } catch (error) { next(error); }
+  }
+
+  async create(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { name, email, password, departmentId, department, roleName, role, status } = req.body;
+      if (!name || !email) {
+        throw new AppError('Name and email are required', 400);
+      }
+
+      const existing = await userRepository.findByEmail(email);
+      if (existing) throw new AppError('An account with this email already exists', 409);
+
+      const currentUser = await userRepository.findById(req.user!.id);
+      const orgId = currentUser?.organizationId;
+
+      let targetRoleName = roleName || role || 'Employee';
+      let userRole = await userRepository.getRoleByName(targetRoleName);
+      if (!userRole) {
+        userRole = await userRepository.getRoleByName('Employee');
+      }
+
+      let deptId = departmentId;
+      if (!deptId && department) {
+        const foundDept = await prisma.department.findFirst({
+          where: { name: department, ...(orgId ? { organizationId: orgId } : {}) },
+        });
+        if (foundDept) deptId = foundDept.id;
+      }
+
+      const hashedPassword = await hashPassword(password || 'Employee@123');
+      const newUser = await userRepository.create({
+        name,
+        email,
+        password: hashedPassword,
+        status: status || 'ACTIVE',
+        provider: 'local',
+        role: { connect: { id: userRole!.id } },
+        ...(deptId ? { department: { connect: { id: deptId } } } : {}),
+        ...(orgId ? { organization: { connect: { id: orgId } } } : {}),
+        avatar: `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(name)}`,
+      });
+
+      const { password: _, refreshToken: __, ...safe } = newUser as any;
+      sendSuccess(res, safe, 'Employee created successfully', 201);
     } catch (error) { next(error); }
   }
 
