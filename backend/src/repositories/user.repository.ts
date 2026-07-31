@@ -75,7 +75,11 @@ export class UserRepository {
   }
 
   async getRoleByName(name: string) {
-    return prisma.role.findUnique({ where: { name } });
+    let role = await prisma.role.findUnique({ where: { name } });
+    if (!role) {
+      role = await prisma.role.create({ data: { name } });
+    }
+    return role;
   }
 
   async findByGoogleId(googleId: string) {

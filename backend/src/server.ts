@@ -90,6 +90,15 @@ async function bootstrap() {
     await prisma.$connect();
     console.log('✅ Database connected successfully');
 
+    // Auto-seed required system roles if missing
+    await Promise.all([
+      prisma.role.upsert({ where: { name: 'Administrator' }, update: {}, create: { name: 'Administrator' } }),
+      prisma.role.upsert({ where: { name: 'Asset Manager' }, update: {}, create: { name: 'Asset Manager' } }),
+      prisma.role.upsert({ where: { name: 'Department Head' }, update: {}, create: { name: 'Department Head' } }),
+      prisma.role.upsert({ where: { name: 'Employee' }, update: {}, create: { name: 'Employee' } }),
+    ]);
+    console.log('✅ System roles verified');
+
     app.listen(PORT, () => {
       console.log(`\n🚀 AssetFlow API Server`);
       console.log(`   Environment: ${env.NODE_ENV}`);
