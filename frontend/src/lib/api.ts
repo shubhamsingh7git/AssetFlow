@@ -6,7 +6,8 @@
 
 import { getAuthHeaders, setToken, clearToken } from './auth';
 
-const API_BASE = import.meta.env.VITE_API_URL || '';
+const rawApiUrl = (import.meta.env.VITE_API_URL || '').trim();
+const API_BASE = rawApiUrl.replace(/\/api\/?$/i, '').replace(/\/+$/, '');
 
 // ─── Generic Helpers ────────────────────────────────────────────────────────
 
