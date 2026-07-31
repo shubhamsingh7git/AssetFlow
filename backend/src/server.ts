@@ -34,7 +34,13 @@ const app = express();
 // ─── Global Middleware ──────────────────────────────────────────────────────
 app.use(helmet());
 app.use(cors({
-  origin: env.CORS_ORIGIN,
+  origin: (origin, callback) => {
+    if (!origin || origin.includes('vercel.app') || origin.includes('localhost') || env.CORS_ORIGIN === '*') {
+      callback(null, true);
+    } else {
+      callback(null, true);
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],

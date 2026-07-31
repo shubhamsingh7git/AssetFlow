@@ -100,6 +100,7 @@ export function errorHandler(
     success: false,
     message,
     error: message,
+    details: err?.message || String(err),
     ...(reason && { reason }),
     ...(field && { field }),
     ...(errors && { errors }),
